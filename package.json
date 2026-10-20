@@ -1,0 +1,14 @@
+{
+  "name": "doctolib-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Surveillance de créneaux Doctolib sur Cloudflare Workers (cron + D1 + Telegram + tableau de bord)",
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
+    "dev": "wrangler dev --test-scheduled",
+    "deploy": "wrangler deploy"
+  },
+  "engines": { "node": ">=22" },
+  "devDependencies": { "wrangler": "^4.0.0" }
+}

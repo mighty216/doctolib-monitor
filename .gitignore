@@ -1,0 +1,12 @@
+node_modules
+.wrangler/
+.dev.vars
+.env
+*.log
+# Données locales de l'installation (jamais sur GitHub)
+doctolib-urls.txt
+.install-state.json
+INFOS.txt
+.secrets.tmp.json
+__pycache__/
+*.pyc

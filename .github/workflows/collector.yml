@@ -1,0 +1,50 @@
+name: Collecteur Doctolib
+
+# GitHub déclenche ce workflow toutes les 5 min environ ; le script décide lui-même s'il passe
+# (rythme irrégulier, ~15 min en moyenne, jamais plus de 25 min d'écart). Les retards habituels de
+# GitHub ajoutent encore de l'irrégularité.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Passer tout de suite (ignore le tirage au sort)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: write   # pour que le workflow se ré-active lui-même (voir la dernière étape)
+
+concurrency:
+  group: collecteur
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    if: github.repository_owner != 'github'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: collector
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: collector/requirements.txt
+      - run: pip install -r collector/requirements.txt
+      - name: Collecter
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          INGEST_KEY: ${{ secrets.INGEST_KEY }}
+          PROXY_URL: ${{ secrets.PROXY_URL }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force && '1' || '0' }}
+        run: python collector/collector.py
+      - name: Garder le planning actif (GitHub coupe les plannings inactifs depuis 60 jours)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow enable collector.yml --repo "$GITHUB_REPOSITORY" || true

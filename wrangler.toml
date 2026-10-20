@@ -1,0 +1,33 @@
+name = "doctolib-monitor"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+# Mode "ingest" (défaut) : toutes les 5 min, ce cron demande à GitHub de lancer le collecteur
+# (tirage au sort irrégulier, ~15 min en moyenne) et surveille qu'il envoie bien des résultats.
+# Mode "direct" : le Worker interroge Doctolib lui-même (refusé par Doctolib depuis Cloudflare) ;
+# dans ce cas mets MODE = "direct" et le cron sur "*/15 * * * *".
+[triggers]
+crons = ["*/5 * * * *"]
+
+# 1) wrangler d1 create doctolib-monitor
+# 2) colle ici le database_id affiché
+[[d1_databases]]
+binding = "DB"
+database_name = "doctolib-monitor"
+database_id = "453a1a19-d684-4e27-bfe6-676bfc1a3feb"
+
+[observability]
+enabled = true
+
+[vars]
+MODE = "ingest"            # "ingest" = collecteur GitHub Actions ; "direct" = le Worker appelle Doctolib
+INTERVAL_MIN = "15"        # rythme moyen visé par le collecteur
+COLLECTOR_STALE_MIN = "75" # alerte Telegram si aucun résultat reçu depuis N minutes
+MAX_DAYS = "21"            # alerte si un créneau existe dans les N prochains jours
+HEARTBEAT_HOURS = "24"     # message "toujours actif" (0 = désactivé)
+FAIL_ALERT_AFTER = "4"     # alerte Telegram après N vérifications en échec d'affilée
+JITTER_MAX_S = "25"        # (mode direct) délai aléatoire avant chaque vérification
+
+# Secrets (jamais dans ce fichier) : wrangler secret put <NOM>
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DASHBOARD_KEY, DOCTOLIB_URLS, INGEST_KEY,
+#   GITHUB_TOKEN (jeton limité au dépôt, permission Actions) et GITHUB_REPO (compte/doctolib-monitor)
