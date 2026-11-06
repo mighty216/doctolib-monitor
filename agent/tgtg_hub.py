@@ -139,7 +139,9 @@ class Bot:
             return
         self.proxy_index = (self.proxy_index % int(p.get("count", 1))) + 1
         try:
-            self.client.session.proxies.update(self.proxies())
+            self.client.proxies = self.proxies()
+            self.client.session.cookies.clear()  # nouvelle IP -> nouveau cookie DataDome
+            self.client.cookie = "datadome=init"
         except Exception:
             pass
         self.log(f"Rotation du proxy -> {p['user_base']}{self.proxy_index}", "warn")
@@ -432,13 +434,36 @@ class Bot:
 def main():
     cfg = load_config()
     try:
-        from tgtg_scanner.tgtg_client import TgtgClient, normalize_cookie  # version installée sur le serveur
+        import tgtg as _tgtg_mod
+        from tgtg_scanner.tgtg_client import TgtgClient as BaseClient
     except ImportError as e:
-        sys.exit(f'Bibliothèque TGTG introuvable ({e}) : pip install --user --break-system-packages "git+https://github.com/Der-Henning/tgtg.git"')
+        sys.exit(f"Bibliotheque TGTG introuvable ({e})")
+
+    class HubClient(BaseClient):
+        """Cookie DataDome régénéré automatiquement, et surtout émis via le MÊME proxy que les requêtes
+        (la lib officielle le demande sans proxy -> IP différente -> 403 permanent)."""
+
+        def _fetch_datadome_cookie(self, request_url):
+            self.cookie = "datadome=init"  # non vide (exigé par login()), remplacé juste après
+            orig = _tgtg_mod.requests.post
+
+            def post(*a, **k):
+                if self.proxies:
+                    k.setdefault("proxies", self.proxies)
+                return orig(*a, **k)
+
+            _tgtg_mod.requests.post = post
+            try:
+                super()._fetch_datadome_cookie(request_url)
+            finally:
+                _tgtg_mod.requests.post = orig
+            fresh = [c.value for c in self.session.cookies if c.name == "datadome" and c.value]
+            if fresh:
+                self.cookie = f"datadome={fresh[-1]}"
 
     def factory(access_token, refresh_token, datadome_cookie, proxies):
-        return TgtgClient(access_token=access_token, refresh_token=refresh_token,
-                          cookie=normalize_cookie(datadome_cookie) if datadome_cookie else None, proxies=proxies)
+        # le cookie sauvegardé est lié à une IP : on repart toujours d'un cookie neuf
+        return HubClient(access_token=access_token, refresh_token=refresh_token, proxies=proxies, cookie="datadome=init")
 
     hub = Hub("tgtg", "Too Good To Go", cfg, log=lambda m: print(m, flush=True))
     Bot(hub, cfg, factory).run()
