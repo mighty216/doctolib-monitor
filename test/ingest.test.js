@@ -107,7 +107,7 @@ test('ingest : entrées hostiles ou incohérentes assainies', async () => {
   assert.ok(!chk[1].error.includes(TOKEN) && !chk[1].error.includes(INGEST));
   assert.ok(!/[<>]/.test(meta('collector')));
   const cookie = (await call(`/?key=${KEY}`, { key: null })).headers.get('set-cookie').split(';')[0];
-  const html = await (await call('/', { key: null, headers: { cookie } })).text();
+  const html = await (await call('/doctolib', { key: null, headers: { cookie } })).text();
   assert.ok(!html.includes('<img src=x'));
 });
 
@@ -123,18 +123,19 @@ test('ingest : requêtes invalides refusées sans toucher à l\'état', async ()
 test('mode collecteur : le bouton « Vérifier maintenant » disparaît, /run refusé, tableau de bord lisible', async () => {
   await call('/api/ingest', { method: 'POST', body: { collector: 'github-actions', results: [okRes(KA, 'Cabinet A', [iso(2)]), okRes(KB, 'Cabinet B')] } });
   const cookie = (await call(`/?key=${KEY}`, { key: null })).headers.get('set-cookie').split(';')[0];
-  const html = await (await call('/', { key: null, headers: { cookie } })).text();
+  const html = await (await call('/doctolib', { key: null, headers: { cookie } })).text();
   assert.ok(!html.includes('action="/run"'));
   assert.match(html, /Tout fonctionne/);
   assert.match(html, /github-actions/);
   const r = await call('/run', { method: 'POST', key: null, headers: { cookie } });
-  assert.equal(r.status, 409);
+  assert.equal(r.status, 303);
+  assert.match(r.headers.get('location'), /bad=1/);
 });
 
 test('mode collecteur : INGEST_KEY manquant signalé sur le tableau de bord', async () => {
   env = makeEnv({ MODE: 'ingest' });
   const cookie = (await call(`/?key=${KEY}`, { key: null })).headers.get('set-cookie').split(';')[0];
-  const html = await (await call('/', { key: null, headers: { cookie } })).text();
+  const html = await (await call('/doctolib', { key: null, headers: { cookie } })).text();
   assert.match(html, /INGEST_KEY/);
 });
 

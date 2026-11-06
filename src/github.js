@@ -1,6 +1,7 @@
 import { ensureSchema, getAllMeta, metaStmt, eventStmt } from './store.js';
 import { sendTelegram, telegramProblems } from './telegram.js';
 import { clampInt, nowSec, scrub } from './util.js';
+import { loadWatches } from './watches.js';
 
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 
@@ -26,6 +27,8 @@ export async function maybeDispatch(env) {
   const meta = await getAllMeta(db);
   const now = nowSec();
   const interval = clampInt(env.INTERVAL_MIN, 15, 1, 1440) * 60;
+  const { active } = await loadWatches(env);
+  if (!active.length) return { dispatched: false, reason: 'aucune surveillance active' };
   const ref = Math.max(Number.parseInt(meta.last_run || '0', 10) || 0, Number.parseInt(meta.last_dispatch || '0', 10) || 0);
   const since = ref ? now - ref : null;
   let go;
@@ -34,6 +37,28 @@ export async function maybeDispatch(env) {
   else go = Math.random() < 0.4;
   if (!go) return { dispatched: false, reason: 'pas maintenant', since };
 
+  const { status, netErr } = await callDispatch(env, token, repo);
+  if (status === 204) {
+    await db.batch([metaStmt(db, 'last_dispatch', now), metaStmt(db, 'dispatch_fail', 0)]);
+    return { dispatched: true };
+  }
+
+  const n = (Number.parseInt(meta.dispatch_fail || '0', 10) || 0) + 1;
+  const why = netErr || `HTTP ${status} : ${REASON[status] || 'refus de GitHub'}`;
+  const secrets = [token, env.TELEGRAM_BOT_TOKEN, env.DASHBOARD_KEY, env.INGEST_KEY];
+  const stmts = [metaStmt(db, 'dispatch_fail', n)];
+  if (n === 1 || n === 3) stmts.push(eventStmt(db, now, 'dispatch_failed', null, scrub(why, secrets)));
+  if (n === 3 && telegramProblems(env).length === 0) {
+    await sendTelegram(env,
+      `Doctolib Monitor : Cloudflare n'arrive plus à lancer le collecteur sur GitHub (${scrub(why, secrets)}). `
+      + 'Il reste le planning de GitHub, beaucoup moins fiable. Recrée le jeton GitHub puis relance install.bat.',
+      { attempts: 2 });
+  }
+  await db.batch(stmts);
+  return { dispatched: false, reason: why, failures: n };
+}
+
+async function callDispatch(env, token, repo) {
   const base = String(env.GITHUB_API_BASE || 'https://api.github.com').replace(/\/$/, '');
   let status = 0;
   let netErr = '';
@@ -55,22 +80,26 @@ export async function maybeDispatch(env) {
   } catch (e) {
     netErr = `réseau (${e?.name || 'erreur'})`;
   }
-  if (status === 204) {
-    await db.batch([metaStmt(db, 'last_dispatch', now), metaStmt(db, 'dispatch_fail', 0)]);
-    return { dispatched: true };
-  }
+  return { status, netErr };
+}
 
-  const n = (Number.parseInt(meta.dispatch_fail || '0', 10) || 0) + 1;
-  const why = netErr || `HTTP ${status} : ${REASON[status] || 'refus de GitHub'}`;
-  const secrets = [token, env.TELEGRAM_BOT_TOKEN, env.DASHBOARD_KEY, env.INGEST_KEY];
-  const stmts = [metaStmt(db, 'dispatch_fail', n)];
-  if (n === 1 || n === 3) stmts.push(eventStmt(db, now, 'dispatch_failed', null, scrub(why, secrets)));
-  if (n === 3 && telegramProblems(env).length === 0) {
-    await sendTelegram(env,
-      `Doctolib Monitor : Cloudflare n'arrive plus à lancer le collecteur sur GitHub (${scrub(why, secrets)}). `
-      + 'Il reste le planning de GitHub, beaucoup moins fiable. Recrée le jeton GitHub puis relance install.bat.',
-      { attempts: 2 });
+/** Vérification immédiate demandée par l'utilisateur (web ou Telegram). Limitée à 1 par minute. */
+export async function forceCheck(env) {
+  const token = String(env.GITHUB_TOKEN || '').trim();
+  const repo = String(env.GITHUB_REPO || '').trim();
+  if (!token || !REPO_RE.test(repo)) return { ok: false, error: 'Lancement immédiat indisponible : jeton GitHub non configuré (relance install.bat). La prochaine vérification aura lieu toute seule.' };
+  const db = env.DB;
+  await ensureSchema(db);
+  const { active } = await loadWatches(env);
+  if (!active.length) return { ok: false, error: 'Aucune surveillance active.' };
+  const meta = await getAllMeta(db);
+  const now = nowSec();
+  const last = Number.parseInt(meta.last_force || '0', 10) || 0;
+  if (now - last < 60) return { ok: false, error: 'Une vérification vient d\'être lancée, patiente une minute.' };
+  const { status, netErr } = await callDispatch(env, token, repo);
+  if (status === 204) {
+    await db.batch([metaStmt(db, 'last_force', now), metaStmt(db, 'last_dispatch', now)]);
+    return { ok: true };
   }
-  await db.batch(stmts);
-  return { dispatched: false, reason: why, failures: n };
+  return { ok: false, error: netErr || `GitHub a refusé (HTTP ${status} : ${REASON[status] || 'erreur'})` };
 }

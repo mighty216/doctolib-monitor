@@ -26,8 +26,10 @@ COLLECTOR_STALE_MIN = "75" # alerte Telegram si aucun résultat reçu depuis N m
 MAX_DAYS = "21"            # alerte si un créneau existe dans les N prochains jours
 HEARTBEAT_HOURS = "24"     # message "toujours actif" (0 = désactivé)
 FAIL_ALERT_AFTER = "4"     # alerte Telegram après N vérifications en échec d'affilée
+AGENT_STALE_MIN = "6"      # alerte Telegram si un agent (TGTG, ali-coins...) ne répond plus depuis N minutes
 JITTER_MAX_S = "25"        # (mode direct) délai aléatoire avant chaque vérification
 
 # Secrets (jamais dans ce fichier) : wrangler secret put <NOM>
-#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DASHBOARD_KEY, DOCTOLIB_URLS, INGEST_KEY,
+#   TELEGRAM_BOT_TOKEN (le bot de TGTG : un seul bot pour tout), TELEGRAM_CHAT_ID, DASHBOARD_KEY, INGEST_KEY, AGENT_KEY,
+#   DOCTOLIB_URLS (facultatif, repris une seule fois au premier démarrage),
 #   GITHUB_TOKEN (jeton limité au dépôt, permission Actions) et GITHUB_REPO (compte/doctolib-monitor)

@@ -1,4 +1,4 @@
-// Installeur Doctolib Monitor : à lancer via install.bat (Windows).
+// Installeur du hub de bots (Doctolib Monitor + TGTG + ali-coins...) : à lancer via install.bat (Windows).
 // Relancer = mettre à jour (base, clé d'accès, Telegram conservés).
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -60,7 +60,7 @@ async function tg(method, token, body) {
 }
 
 // ---------------------------------------------------------------------------
-console.log(`\n${c.b}=== Doctolib Monitor : installation ===${c.x}`);
+console.log(`\n${c.b}=== Hub de bots (Doctolib Monitor) : installation ===${c.x}`);
 const state = loadState();
 
 // 1/8 --------------------------------------------------------------------
@@ -157,8 +157,19 @@ ok('Base prête (séparée de celle de pellicule)');
 // 4/8 --------------------------------------------------------------------
 step(4, 'Telegram');
 let tries = 0;
+const TOKEN_RE = /^\d+:[\w-]{30,}$/;
+if (state.token) {
+  const cur = await tg('getMe', state.token);
+  if (cur.ok) {
+    info(`Bot Telegram actuel : @${cur.result.username}`);
+    info('Le hub utilise UN SEUL bot : celui de TGTG (il reçoit toutes les commandes).');
+    const a = await ask('Entrée = garder ce bot, ou colle ici le token du bot TGTG :');
+    if (a && TOKEN_RE.test(a)) state.token = a;
+    else if (a) warn('Format de token inattendu : je garde le bot actuel.');
+  } else state.token = '';
+}
 while (true) {
-  if (!state.token) state.token = await ask('Colle le token de ton bot Telegram (celui de ton ancien fichier .env) :');
+  if (!state.token) state.token = await ask('Colle le token du bot Telegram de TGTG (BotFather > /mybots > ton bot > API Token) :');
   const me = await tg('getMe', state.token);
   if (me.ok) { ok(`Bot : @${me.result.username}`); break; }
   warn(`Token refusé par Telegram (${me.description || 'erreur'}).`);
@@ -211,27 +222,25 @@ ok(`En ligne : ${baseUrl}`);
 step(6, 'Réglages');
 if (!state.key) state.key = crypto.randomBytes(16).toString('hex');
 if (!state.ingestKey) state.ingestKey = crypto.randomBytes(24).toString('hex');
-if (!fs.existsSync(URLS_FILE)) fs.writeFileSync(URLS_FILE, '# Une URL Doctolib par ligne (étape calendrier des créneaux)\n');
-let urls = fs.readFileSync(URLS_FILE, 'utf8').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
-if (!urls.length) {
-  const pasted = await ask('Colle l’URL Doctolib du calendrier (plusieurs possibles, séparées par un espace) :');
-  urls = pasted.split(/\s+/).filter(Boolean);
-  fs.appendFileSync(URLS_FILE, `${urls.join('\n')}\n`);
-}
+if (!state.agentKey) state.agentKey = crypto.randomBytes(24).toString('hex');
+if (!fs.existsSync(URLS_FILE)) fs.writeFileSync(URLS_FILE, '# Facultatif : liens Doctolib à surveiller dès la toute première installation.\n# Ensuite tout se gère dans l\'interface web ou dans Telegram (colle un lien dans le bot).\n');
+const urls = fs.readFileSync(URLS_FILE, 'utf8').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
 const bad = urls.filter((u) => !/\/booking\//.test(u) || !/placeId=practice-\d+/.test(u) || !/motiveIds/.test(u));
-if (bad.length) fail(`URL Doctolib incomplète (il faut celle de l'étape calendrier, avec placeId et motiveIds) :\n  ${bad[0]}`);
+if (bad.length) warn(`Lien Doctolib incomplet ignoré (il faut celui de l'étape calendrier, avec placeId et motiveIds) :\n  ${bad[0]}`);
+const goodUrls = urls.filter((u) => !bad.includes(u));
 fs.writeFileSync(TMP_SECRETS, JSON.stringify({
   TELEGRAM_BOT_TOKEN: state.token,
   TELEGRAM_CHAT_ID: state.chatId,
   DASHBOARD_KEY: state.key,
   INGEST_KEY: state.ingestKey,
-  DOCTOLIB_URLS: urls.join(' '),
+  AGENT_KEY: state.agentKey,
+  ...(goodUrls.length ? { DOCTOLIB_URLS: goodUrls.join(' ') } : {}),
 }));
 const sec = run(`${WR} secret bulk ${TMP_SECRETS}`);
 cleanup();
 if (sec.code !== 0) fail(`Enregistrement des réglages impossible :\n${(sec.err + sec.out).trim().split('\n').slice(-6).join('\n')}`);
 saveState(state);
-ok(`${urls.length} cabinet(s) à surveiller, Telegram et clés d'accès enregistrés`);
+ok(`Telegram et clés d'accès enregistrés${goodUrls.length ? ` (${goodUrls.length} lien(s) Doctolib repris au premier démarrage)` : ''}`);
 
 // 7/8 --------------------------------------------------------------------
 step(7, 'GitHub (le collecteur qui interroge Doctolib)');
@@ -376,13 +385,30 @@ for (let i = 0; i < 40 && !cookie; i++) {
 if (!cookie) fail(`Le site ne répond pas encore. Attends 2 minutes puis relance install.bat. (${baseUrl})`);
 const call = async (p, method = 'GET') => fetch(`${baseUrl}${p}`, { method, headers: { cookie }, redirect: 'manual', signal: AbortSignal.timeout(60000) });
 
+// Telegram : le webhook pointe maintenant sur ce Worker (un seul bot pour tous tes bots)
+{
+  let hook = { ok: false };
+  for (let i = 0; i < 10 && !hook.ok; i++) {
+    try {
+      const r = await fetch(`${baseUrl}/api/ingest/setup-telegram`, { method: 'POST', headers: { Authorization: `Bearer ${state.ingestKey}` }, signal: AbortSignal.timeout(20000) });
+      hook = await r.json().catch(() => ({ ok: false }));
+    } catch { hook = { ok: false }; }
+    if (!hook.ok) await sleep(3000);
+  }
+  if (hook.ok) ok('Telegram branché sur le hub (commandes, menus et boutons actifs)');
+  else warn(`Telegram n'a pas pu être branché automatiquement${hook.error ? ` (${hook.error})` : ''}. Sur le site, bouton « Reconnecter Telegram ».`);
+}
+const pre = await (await call('/api/status')).json().catch(() => null);
+const hasWatches = !!pre?.watches?.some((w) => !w.paused);
+if (!hasWatches) info('Aucune surveillance Doctolib pour le moment : colle un lien Doctolib dans Telegram (ou sur le site) pour en ajouter.');
+
 const listRuns = () => {
   try { return JSON.parse(run(`${GH} run list --repo ${full} --workflow collector.yml --event workflow_dispatch --limit 3 --json databaseId,status,conclusion`).out); } catch { return []; }
 };
 const before = Math.max(0, ...listRuns().map((r) => r.databaseId));
-info('Premier passage du collecteur sur GitHub (1 à 2 minutes)...');
-let launched = false;
-if (state.ghToken) {
+if (hasWatches) info('Premier passage du collecteur sur GitHub (1 à 2 minutes)...');
+let launched = !hasWatches;
+if (state.ghToken && hasWatches) {
   for (let i = 0; i < 12 && !launched; i++) {
     const code = await ghApi('POST', `${WF}/dispatches`, state.ghToken, { ref: 'main', inputs: { force: 'true' } });
     if (code === 204) launched = true;
@@ -398,8 +424,8 @@ for (let i = 0; i < 12 && !launched; i++) {
   launched = run(`${GH} workflow run collector.yml --repo ${full} -f force=true`).code === 0;
   if (!launched) await sleep(5000);
 }
-let finished = null;
-if (launched) {
+let finished = hasWatches ? null : { conclusion: 'success' };
+if (launched && hasWatches) {
   for (let i = 0; i < 60 && !finished; i++) {
     await sleep(i < 3 ? 3000 : 6000);
     finished = listRuns().find((r) => r.databaseId > before && r.status === 'completed') || null;
@@ -435,25 +461,31 @@ if (!stj || !stj.watches) {
 const tgTest = await call('/test-telegram', 'POST').catch(() => null);
 if (tgTest && tgTest.status === 303) ok('Test Telegram envoyé par le site (vérifie ton téléphone)');
 
+const agentLine = `curl -fsSL -H "Authorization: Bearer ${state.agentKey}" ${baseUrl}/agent/install.sh | bash`;
 fs.writeFileSync(INFOS_FILE, [
-  'Doctolib Monitor',
+  'Hub de bots',
   '',
-  `Tableau de bord : ${link}`,
+  `Interface web   : ${link}`,
   `Adresse         : ${baseUrl}`,
   `Clé d'accès     : ${state.key}`,
   `Collecteur      : https://github.com/${full}/actions`,
   '',
-  "Pour mettre à jour ou changer de cabinet : modifie doctolib-urls.txt puis relance install.bat.",
+  'Brancher TGTG et AliExpress coins : connecte-toi en SSH à ton serveur OVH et colle cette ligne :',
+  agentLine,
+  '',
+  "Les surveillances Doctolib se gèrent sur le site ou dans Telegram (/doctolib, ou colle un lien).",
   '',
 ].join('\n'));
 await tg('sendMessage', state.token, {
   chat_id: state.chatId,
-  text: `Doctolib Monitor est en ligne.\nTableau de bord (ouvre ce lien une fois sur ton téléphone) :\n${link}`,
+  text: `Le hub est en ligne. Envoie /menu pour tout piloter ici.\nInterface web (ouvre ce lien une fois sur ton téléphone) :\n${link}`,
 });
 
 console.log(`\n${c.b}${allOk ? c.g : c.y}=== ${allOk ? 'Installation terminée' : 'Installé, mais à vérifier'} ===${c.x}`);
-console.log(`\n  Tableau de bord : ${link}`);
+console.log(`\n  Interface web : ${link}`);
 console.log(`  (adresse et clé gardées dans ${INFOS_FILE}, le lien t'a aussi été envoyé sur Telegram)`);
+console.log('\n  Pour brancher TGTG et AliExpress coins : connecte-toi en SSH au serveur OVH et colle :');
+console.log(`  ${agentLine}`);
 if (allOk) {
   console.log(`\n  ${state.ghToken ? 'Cloudflare lance' : 'GitHub lance'} le contrôle tout seul environ toutes les 15 minutes, à intervalle irrégulier.`);
   console.log('  Tu n\'as plus rien à faire : Telegram te prévient d\'un créneau, ou si la surveillance s\'arrête.\n');

@@ -5,7 +5,7 @@ import { FatalError, BlockedError, SchemaError, SLOT_RE, addDays, sleepMs, rand 
 //  - availabilities.json : créneaux
 const INFO_PATH = '/online_booking/api/slot_selection_funnel/v1/info.json';
 const AVAIL_PATH = '/availabilities.json';
-export const MAX_WATCHES = 4; // 50 sous-requêtes max par exécution (plan gratuit)
+export const MAX_WATCHES = 12;
 
 const base = (env) => String(env.DOCTOLIB_BASE || 'https://www.doctolib.fr').replace(/\/$/, '');
 

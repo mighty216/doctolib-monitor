@@ -1,4 +1,34 @@
-# Doctolib Monitor
+# Hub de bots (Doctolib Monitor, TGTG, AliExpress coins…)
+
+Une interface web commune + **un seul bot Telegram** (celui de TGTG) pour tout piloter :
+
+| Bot | Où il tourne | Ce que tu peux faire (web **et** Telegram) |
+|---|---|---|
+| Doctolib | Cloudflare + collecteur GitHub | ajouter un lien (colle-le dans Telegram), pause, reprise, renommer, supprimer, vérifier maintenant |
+| Too Good To Go | ton serveur OVH | favoris, commandes, réserver 1-3, annuler, horaires, intervalle, auto-résa, log, reboot |
+| AliExpress coins | ton serveur OVH | état du dernier passage, pièces/série, lancer maintenant, test à blanc |
+| MédinLyon / autres | ton serveur | même mécanique (voir « Ajouter un bot ») |
+
+Telegram : `/menu` (boutons), `/bots`, `/doctolib`, `/ajouter <lien>`, `/pause 2`, `/reprendre 2`, `/supprimer 2`, `/verifier`,
+`/favoris`, `/commandes`, `/annuler <n°>`, `/reserver <id>`, `/horaires 6h-22h`, `/auto`, `/interval 30`, `/log`, `/ok`, `/reboot`, `/coins`, `/coins run`.
+Seul ton chat est écouté. Si un bot ne répond plus pendant 6 min, Telegram te prévient.
+
+## Brancher TGTG et AliExpress coins sur le serveur
+
+Après `install.bat`, `INFOS.txt` contient une ligne à coller en SSH sur le serveur OVH. Elle reprend toute seule les jetons
+TGTG, le proxy et les réglages de l'ancien script, arrête l'ancien service `tgtg` (sans le supprimer), détecte `~/ali-coins`
+et crée les services `hub-tgtg` / `hub-scripts`. Relançable sans risque (mise à jour).
+`tgtg_hub.py` remplace `tgtg_monitor.py` : il n'écoute plus Telegram lui-même (le hub s'en charge).
+
+**Ajouter un bot** (ex. MédinLyon) : ajoute un bloc dans `~/bot-hub/scripts.json` (`id`, `name`, `cwd`, `run`, `log`, `metrics`) puis
+`sudo systemctl restart hub-scripts`. Un script Python quelconque devient une page web + des commandes Telegram.
+
+**Token Telegram** : si le token a été collé dans un chat, révoque-le (BotFather > /revoke), relance `install.bat` avec le nouveau,
+puis mets-le aussi dans `~/ali-coins/credentials.env`.
+
+---
+
+# Doctolib Monitor (détail)
 
 Surveille les créneaux Doctolib d'un ou plusieurs cabinets, prévient sur **Telegram** quand un
 **nouveau** créneau apparaît, et affiche l'état dans un **tableau de bord** protégé (Cloudflare).
@@ -39,8 +69,7 @@ Worker Cloudflare  ◄───────────── envoie les résult
    pose les secrets, lance un premier passage et affiche le résultat par cabinet. Le lien du tableau de bord
    est aussi envoyé sur Telegram.
 
-Adresse et clé : `INFOS.txt`. Cabinets : `doctolib-urls.txt` (une URL par ligne, 4 maximum).
-Pour **changer de cabinet ou mettre à jour** : modifie ce fichier puis relance `install.bat`.
+Adresse et clé : `INFOS.txt`. Cabinets : à gérer sur le site ou dans Telegram (12 actifs maximum). `doctolib-urls.txt` ne sert qu'au tout premier démarrage.
 Pour **changer de proxy** : `gh secret set PROXY_URL --repo TON_COMPTE/doctolib-monitor`.
 Quand le jeton GitHub arrive à expiration (au plus 1 an), Telegram te prévient : relance `install.bat` et recolle un nouveau jeton.
 
@@ -97,7 +126,7 @@ Pour espacer davantage les passages (30 min en moyenne), mets `INTERVAL_MIN = "3
 ## Développement
 
 ```bash
-npm test                                   # 48 tests (Doctolib et Telegram simulés, D1 en mémoire)
+npm test                                   # 96 tests (Worker, hub, agents Python, installeur serveur)
 npm run dev                                # mettre les secrets dans .dev.vars (ignoré par git)
 WORKER_URL=... INGEST_KEY=... PROXY_URL=... FORCE=1 python collector/collector.py
 ```

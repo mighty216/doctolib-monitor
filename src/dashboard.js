@@ -1,7 +1,7 @@
 import { groupByDay, dayLabel } from './util.js';
 
-export const esc = (v) =>
-  String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+import { esc, shell, timeTag, fmtTime } from './layout.js';
+export { esc };
 
 const STATUS = {
   ok: ['OK', 'ok'],
@@ -23,17 +23,13 @@ const EVENT = {
   dispatch_failed: 'Lancement du collecteur impossible',
 };
 
-const fmtTime = (ts) =>
-  new Intl.DateTimeFormat('fr-FR', {
-    timeZone: 'Europe/Paris', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
-  }).format(new Date(ts * 1000));
-
-const timeTag = (ts) => (ts ? `<time data-ts="${Number(ts)}">${esc(fmtTime(ts))}</time>` : '—');
 const pct = (r) => (r && r.n ? `${Math.round((100 * r.ok) / r.n)} % (${r.ok}/${r.n})` : '—');
 
 function globalState(view) {
-  const { lastRun, intervalMin, now, watches, hasConfig } = view;
+  const { lastRun, intervalMin, now, hasConfig } = view;
+  const watches = view.watches.filter((w) => !w.paused);
   if (!hasConfig) return ['bad', 'Configuration incomplète'];
+  if (!watches.length) return ['idle', view.watches.length ? 'Toutes les surveillances sont en pause' : 'Aucune surveillance : ajoute un lien Doctolib'];
   if (!lastRun) return ['idle', 'En attente de la première vérification'];
   if (view.mode === 'ingest') {
     if (now - lastRun > (view.staleMin || 75) * 60) return ['bad', 'Plus de données du collecteur : GitHub Actions semble arrêté'];
@@ -79,11 +75,24 @@ function card(w) {
 </article>`;
 }
 
+function manageCard(w) {
+  const [label, cls] = w.paused ? ['En pause', ''] : (STATUS[w.last?.status] || ['Pas encore vérifié', 'idle']);
+  return `<tr><td>${esc(w.label)}${w.name ? ` <span class="muted">(${esc(w.autoLabel)})</span>` : ''}<br><span class="muted">${esc(w.key)}</span></td>
+<td><span class="badge ${cls}">${esc(label)}</span></td>
+<td class="actions">
+${w.paused
+    ? `<form class="inline" method="post" action="/doctolib/resume"><input type="hidden" name="key" value="${esc(w.key)}"><button class="sm" type="submit">▶ Reprendre</button></form>`
+    : `<form class="inline" method="post" action="/doctolib/pause"><input type="hidden" name="key" value="${esc(w.key)}"><button class="sm" type="submit">⏸ Pause</button></form>`}
+<form class="inline" method="post" action="/doctolib/rename"><input type="hidden" name="key" value="${esc(w.key)}"><input type="text" name="name" placeholder="Renommer" value="${esc(w.name || '')}" maxlength="60" style="width:130px"><button class="sm" type="submit">OK</button></form>
+<form class="inline" method="post" action="/doctolib/delete" data-confirm="Supprimer cette surveillance et son historique ?"><input type="hidden" name="key" value="${esc(w.key)}"><button class="sm danger" type="submit">🗑</button></form>
+</td></tr>`;
+}
+
 /**
  * view = { now, intervalMin, horizon, hasConfig, problems[], lastRun, watches[], events[] }
- * Toutes les chaînes sont échappées ici.
+ * ctx = { nav, flash }. Toutes les chaînes sont échappées ici.
  */
-export function renderDashboard(view) {
+export function renderDashboard(view, ctx = {}) {
   const [gcls, gtxt] = globalState(view);
   const problems = view.problems.length
     ? `<section class="notice"><b>À corriger :</b><ul>${view.problems.map((p) => `<li>${esc(p)}</li>`).join('')}</ul></section>` : '';
@@ -92,58 +101,27 @@ export function renderDashboard(view) {
       view.events.map((e) => `<tr class="ev-${esc(e.type)}"><td>${timeTag(e.ts)}</td><td>${esc(EVENT[e.type] || e.type)}</td><td>${esc(e.detail || '')}</td></tr>`).join('')
     }</tbody></table>`
     : '<p class="muted">Rien pour le moment.</p>';
-  return `<!doctype html>
-<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex,nofollow"><title>Doctolib Monitor</title>
-<style>
-:root{--bg:#f6f7f9;--fg:#1c2330;--mut:#667085;--card:#fff;--bd:#e3e6ec;--ok:#1a8a4a;--warn:#c27c0e;--bad:#c0362c;--idle:#98a2b3}
-@media (prefers-color-scheme:dark){:root{--bg:#10141b;--fg:#e6e9ef;--mut:#98a2b3;--card:#171c26;--bd:#272f3d;--ok:#3ec47a;--warn:#e0a03a;--bad:#ef6a5e;--idle:#667085}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-main{max-width:980px;margin:0 auto;padding:20px 16px 48px}
-h1{font-size:20px;margin:0 0 4px}h2{font-size:16px;margin:0}h3{font-size:15px;margin:28px 0 8px}
-.top{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:16px}
-.global{display:inline-block;padding:3px 12px;border-radius:999px;font-weight:600;color:#fff;background:var(--idle)}
-.global.ok{background:var(--ok)}.global.warn{background:var(--warn)}.global.bad{background:var(--bad)}
-.muted{color:var(--mut);margin:4px 0;font-size:13px}.err{color:var(--bad);margin:6px 0;font-size:13px;word-break:break-word}
-button{font:inherit;padding:7px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--card);color:var(--fg);cursor:pointer}
-button:hover{border-color:var(--mut)}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:14px}
-.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px}
-.row{display:flex;justify-content:space-between;gap:10px;align-items:center}
-.badge{font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;color:#fff;background:var(--idle);white-space:nowrap}
-.badge.ok{background:var(--ok)}.badge.warn{background:var(--warn)}.badge.bad{background:var(--bad)}
-.big{font-size:30px;font-weight:700;margin:6px 0 0}.big span{font-size:14px;font-weight:400;color:var(--mut)}
-.tl{display:flex;gap:2px;margin:10px 0 6px;flex-wrap:nowrap;overflow:hidden}
-.c{flex:1 1 0;min-width:3px;height:18px;border-radius:2px;background:var(--idle);display:block}
-.c.ok{background:var(--ok)}.c.warn{background:var(--warn)}.c.bad{background:var(--bad)}
-.slots{list-style:none;padding:0;margin:10px 0 0}.slots li{padding:4px 0;border-top:1px solid var(--bd)}
-.slot{display:inline-block;padding:0 7px;margin:0 2px;border-radius:6px;background:var(--bg);border:1px solid var(--bd);font-variant-numeric:tabular-nums}
-.tag{font-size:11px;color:var(--warn)}
-.notice{background:var(--card);border:1px solid var(--warn);border-radius:10px;padding:10px 14px;margin-bottom:14px}.notice ul{margin:6px 0 0;padding-left:20px}
-table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--bd);border-radius:10px;overflow:hidden;font-size:13px}
-th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--bd);vertical-align:top}th{color:var(--mut);font-weight:600}
-td:last-child{word-break:break-word}.ev-alert_failed td,.ev-down td,.ev-telegram_ko td{color:var(--bad)}
-.actions{display:flex;gap:8px;flex-wrap:wrap}
-</style></head><body><main>
-<div class="top"><div><h1>Doctolib Monitor</h1>
+  const flash = ctx.flash ? `<div class="flash ${ctx.flash.ok ? '' : 'bad'}">${esc(ctx.flash.text)}</div>` : '';
+  const manage = `<h3>Gérer les surveillances</h3>
+<div class="card">
+${view.watches.length ? `<table><thead><tr><th>Surveillance</th><th>État</th><th>Actions</th></tr></thead><tbody>${view.watches.map(manageCard).join('')}</tbody></table>` : '<p class="muted">Aucune surveillance.</p>'}
+<form method="post" action="/doctolib/add"><div class="formrow">
+<input type="url" name="url" required placeholder="Colle ici le lien Doctolib de l'étape calendrier (…/booking/availabilities?…)">
+<input type="text" name="name" class="grow" maxlength="60" placeholder="Nom (facultatif)" style="max-width:200px">
+<button class="pri" type="submit">➕ Ajouter</button></div></form>
+<p class="muted">Sur Doctolib, choisis le motif de consultation puis copie l'adresse de la page où s'affichent les créneaux. Tu peux aussi la coller directement dans Telegram.</p>
+</div>`;
+  const cards = view.watches.filter((w) => !w.paused).map(card).join('') || '<p class="muted">Aucune surveillance active.</p>';
+  const body = `${flash}<div class="top"><div><h1>Doctolib Monitor</h1>
 <span class="global ${gcls}">${esc(gtxt)}</span>
 <p class="muted">Dernier passage : ${timeTag(view.lastRun)} · ${view.mode === 'ingest' ? `environ toutes les ${esc(view.intervalMin)} min, à intervalle irrégulier${view.collector ? ` · collecteur : ${esc(view.collector)}` : ''}` : `toutes les ${esc(view.intervalMin)} min`} · horizon ${esc(view.horizon)} jours</p></div>
-<div class="actions">${view.mode === 'ingest' ? '' : '<form method="post" action="/run"><button type="submit">Vérifier maintenant</button></form>'}
+<div class="actions">${view.mode === 'ingest' ? '<form method="post" action="/doctolib/check"><button type="submit">Vérifier maintenant</button></form>' : '<form method="post" action="/run"><button type="submit">Vérifier maintenant</button></form>'}
 <form method="post" action="/test-telegram"><button type="submit">Tester Telegram</button></form></div></div>
 ${problems}
-<section class="cards">${view.watches.map(card).join('') || '<p class="muted">Aucun cabinet configuré.</p>'}</section>
-<h3>Journal</h3>${events}
-</main>
-<script>
-(function(){
-  function rel(ts){var d=Math.max(0,Math.floor(Date.now()/1000)-ts);
-    if(d<90)return"à l'instant";if(d<3600)return"il y a "+Math.round(d/60)+" min";
-    if(d<86400)return"il y a "+Math.round(d/3600)+" h";return"il y a "+Math.round(d/86400)+" j";}
-  document.querySelectorAll("time[data-ts]").forEach(function(t){
-    var a=t.textContent;t.title=a;t.textContent=a+" ("+rel(+t.dataset.ts)+")";});
-  setInterval(function(){if(document.visibilityState==="visible")location.reload()},300000);
-})();
-</script></body></html>`;
+<section class="cards">${cards}</section>
+${manage}
+<h3>Journal</h3>${events}`;
+  return shell({ title: 'Doctolib Monitor', nav: ctx.nav || [], active: '/doctolib', body });
 }
 
 export function renderMessage(title, text, status = 200) {

@@ -13,6 +13,22 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS events (
      id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, type TEXT NOT NULL,
      watch TEXT, detail TEXT)`,
+  // --- Hub : surveillances Doctolib gérées depuis l'interface / Telegram
+  `CREATE TABLE IF NOT EXISTS watches (
+     key TEXT PRIMARY KEY, url TEXT NOT NULL, name TEXT, paused INTEGER NOT NULL DEFAULT 0,
+     created_at INTEGER NOT NULL)`,
+  // --- Hub : bots branchés par un agent (TGTG, ali-coins, MédinLyon...)
+  `CREATE TABLE IF NOT EXISTS bots (
+     id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT, last_seen INTEGER NOT NULL DEFAULT 0,
+     state TEXT, state_ts INTEGER NOT NULL DEFAULT 0)`,
+  `CREATE TABLE IF NOT EXISTS commands (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, bot TEXT NOT NULL, cmd TEXT NOT NULL, args TEXT,
+     source TEXT NOT NULL DEFAULT 'web', status TEXT NOT NULL DEFAULT 'pending',
+     created_at INTEGER NOT NULL, done_at INTEGER, result TEXT)`,
+  `CREATE INDEX IF NOT EXISTS idx_commands_bot ON commands (bot, status, id)`,
+  `CREATE TABLE IF NOT EXISTS bot_events (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, bot TEXT NOT NULL,
+     level TEXT NOT NULL DEFAULT 'info', text TEXT NOT NULL)`,
 ];
 
 let schemaDone = false;

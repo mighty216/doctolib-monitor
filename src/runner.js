@@ -1,7 +1,8 @@
 import {
-  parseWatches, getBookingInfo, resolveAgendas, placeLabel, fetchSlots,
+  getBookingInfo, resolveAgendas, placeLabel, fetchSlots,
 } from './doctolib.js';
 import { sendTelegram, telegramProblems } from './telegram.js';
+import { loadWatches } from './watches.js';
 import {
   ensureSchema, getAllMeta, getAllSlots, acquireLock, setMeta, metaStmt, metaDelStmt,
   upsertSlotStmt, pruneSlotsStmt, checkStmt, eventStmt, retentionStmts,
@@ -59,8 +60,9 @@ export async function runChecks(env, opts = {}) {
   const db = env.DB;
   if (!db) return { ok: false, reason: 'binding D1 "DB" absent (wrangler.toml)' };
   await ensureSchema(db);
-  const { watches, errors } = parseWatches(env.DOCTOLIB_URLS);
-  if (!watches.length) return { ok: false, reason: errors[0] || 'DOCTOLIB_URLS vide' };
+  const { active, errors } = await loadWatches(env);
+  const watches = active.slice(0, 4); // mode direct : 50 sous-requêtes max par exécution
+  if (!watches.length) return { ok: false, reason: errors[0] || 'aucune surveillance active' };
   const t0 = nowSec();
   if (!(await acquireLock(db, t0, LOCK_TTL))) return { ok: false, skipped: true, reason: 'vérification déjà en cours' };
   try {
@@ -99,8 +101,8 @@ export async function ingest(env, payload) {
   const db = env.DB;
   if (!db) return { ok: false, status: 500, reason: 'binding D1 "DB" absent' };
   await ensureSchema(db);
-  const { watches } = parseWatches(env.DOCTOLIB_URLS);
-  if (!watches.length) return { ok: false, status: 409, reason: 'DOCTOLIB_URLS vide ou invalide côté Worker' };
+  const { active: watches } = await loadWatches(env);
+  if (!watches.length) return { ok: false, status: 409, reason: 'aucune surveillance active côté Worker' };
   if (!payload || typeof payload !== 'object' || !Array.isArray(payload.results)) {
     return { ok: false, status: 400, reason: 'corps invalide : { results: [...] } attendu' };
   }
@@ -113,7 +115,7 @@ export async function ingest(env, payload) {
     const secrets = [env.TELEGRAM_BOT_TOKEN, env.DASHBOARD_KEY, env.INGEST_KEY];
     const results = [];
     const seen = new Set();
-    for (const r of payload.results.slice(0, 8)) {
+    for (const r of payload.results.slice(0, 14)) {
       const w = r && byKey.get(String(r.key));
       if (!w || seen.has(w.key)) continue;
       seen.add(w.key);
@@ -153,8 +155,8 @@ export async function watchdog(env) {
   const db = env.DB;
   if (!db) return { ok: false, reason: 'binding D1 "DB" absent' };
   await ensureSchema(db);
-  const { watches } = parseWatches(env.DOCTOLIB_URLS);
-  if (!watches.length) return { ok: false, reason: 'DOCTOLIB_URLS vide' };
+  const { active: watches } = await loadWatches(env);
+  if (!watches.length) return { ok: true, reason: 'aucune surveillance active' };
   const meta = await getAllMeta(db);
   const now = nowSec();
   const since = Number.parseInt(meta.watchdog_since || '0', 10);
@@ -238,6 +240,14 @@ async function commit(env, ctx) {
         events.push(['down', r.w.key, `${r.label} : ${r.status} - ${r.error}`]);
       }
       if (r.dropAgenda) metaOps.push(['del', `agenda:${r.w.key}`]);
+    }
+    if (meta[`new:${r.w.key}`]) { // première vérification d'une surveillance ajoutée à la main
+      metaOps.push(['del', `new:${r.w.key}`]);
+      if (canAlert) {
+        await sendTelegram(env, r.status === 'ok'
+          ? `Surveillance démarrée : ${r.label}\n${r.slots.length ? `${r.slots.length} créneau(x) sous ${horizon} jours.` : `Aucun créneau pour le moment${r.next ? ` (prochain connu : ${r.next.slice(0, 10)})` : ''}.`} Je te préviens dès qu'il y en a un nouveau.`
+          : `Surveillance ajoutée, mais la première vérification a échoué : ${r.error}. Je réessaie automatiquement.`, o);
+      }
     }
     if (r.newAgenda) metaOps.push(['set', `agenda:${r.w.key}`, JSON.stringify(r.newAgenda)]);
     rows.push(checkStmt(db, {

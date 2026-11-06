@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Surveillance de créneaux Doctolib sur Cloudflare Workers (cron + D1 + Telegram + tableau de bord)",
   "scripts": {
-    "test": "node --test \"test/**/*.test.js\"",
+    "test": "node scripts/build-agent.mjs --check && node --test \"test/**/*.test.js\" && python3 agent/test_agent.py",
     "dev": "wrangler dev --test-scheduled",
     "deploy": "wrangler deploy"
   },
