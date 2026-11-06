@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const FILES = ['hub_client.py', 'tgtg_hub.py', 'script_agent.py'];
+const FILES = ['hub_client.py', 'tgtg_hub.py', 'script_agent.py', 'medinlyon.py'];
 const files = {};
 for (const f of FILES) files[f] = fs.readFileSync(path.join(root, 'agent', f), 'utf8');
 const template = fs.readFileSync(path.join(root, 'agent', 'install-agent.sh'), 'utf8');

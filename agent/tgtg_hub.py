@@ -45,7 +45,7 @@ class Bot:
         self.last_ok = time.time()
         self.fail_count = 0
         self.down_alerted = False
-        self.proxy_index = 1
+        self.proxy_index = 0  # 0 = sans proxy (l'IP du serveur passe) ; 1..N = proxys Webshare en secours
         self.orders = []
         self.stop = False
         self.reboot = False
@@ -98,7 +98,7 @@ class Bot:
     # ------------------------------------------------------------------ client TGTG
     def proxies(self):
         p = self.cfg.get("tgtg", {}).get("proxy")
-        if not p:
+        if not p or self.proxy_index == 0:
             return None
         user = f"{p['user_base']}{self.proxy_index}"
         url = f"http://{user}:{p['password']}@{p['host']}:{p.get('port', 80)}"
@@ -137,14 +137,14 @@ class Bot:
         p = self.cfg.get("tgtg", {}).get("proxy")
         if not p:
             return
-        self.proxy_index = (self.proxy_index % int(p.get("count", 1))) + 1
+        self.proxy_index = (self.proxy_index + 1) % (int(p.get("count", 1)) + 1)
         try:
             self.client.proxies = self.proxies()
             self.client.session.cookies.clear()  # nouvelle IP -> nouveau cookie DataDome
             self.client.cookie = "datadome=init"
         except Exception:
             pass
-        self.log(f"Rotation du proxy -> {p['user_base']}{self.proxy_index}", "warn")
+        self.log("Rotation du proxy -> " + (f"{p['user_base']}{self.proxy_index}" if self.proxy_index else "connexion directe"), "warn")
 
     # ------------------------------------------------------------------ extraction d'un favori
     @staticmethod
@@ -227,13 +227,14 @@ class Bot:
             except Exception as e:
                 self.fail_count += 1
                 self.log(f"Scan en erreur ({self.fail_count}) : {str(e)[:150]}", "warn")
-                if self.fail_count % 2 == 0:
+                blocked = "403" in str(e)
+                if blocked or self.fail_count % 2 == 0:  # blocage DataDome : on change d'IP tout de suite
                     self.rotate_proxy()
                 if time.time() - self.last_ok > 600 and not self.down_alerted:
                     self.down_alerted = True
                     self.hub.message(f"🔴 TGTG : plus aucun scan réussi depuis 10 min ({str(e)[:100]}). Jeton mort, proxy HS ou blocage ?")
                     self.log("Plus de scan réussi depuis 10 min", "bad")
-                time.sleep(15)
+                time.sleep(4 if blocked else 15)
                 continue
             time.sleep(self.settings["interval"])
 
@@ -463,7 +464,8 @@ def main():
 
     def factory(access_token, refresh_token, datadome_cookie, proxies):
         # le cookie sauvegardé est lié à une IP : on repart toujours d'un cookie neuf
-        return HubClient(access_token=access_token, refresh_token=refresh_token, proxies=proxies, cookie="datadome=init")
+        return HubClient(access_token=access_token, refresh_token=refresh_token, proxies=proxies,
+                         cookie=(("datadome=" + datadome_cookie) if datadome_cookie and "=" not in datadome_cookie else datadome_cookie) or "datadome=init")
 
     hub = Hub("tgtg", "Too Good To Go", cfg, log=lambda m: print(m, flush=True))
     Bot(hub, cfg, factory).run()

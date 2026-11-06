@@ -99,7 +99,7 @@ home = os.path.expanduser("~")
 ali = os.path.join(home, "ali-coins")
 if os.path.isfile(os.path.join(ali, "run_all.sh")):
     specs.append({"id": "alicoins", "name": "AliExpress coins", "cwd": ali, "run": "./run_all.sh --no-delay", "log": "cron.log",
-                  "dry_args": "--dry-run --notify", "stale_hours": 36,
+                  "dry_args": "--dry-run --notify", "stale_hours": 36, "daily_at": "09:30",
                   "metrics": [{"label": "Pièces gagnées", "regex": r"coins[=: ]+(\d+)"},
                               {"label": "Série (jours)", "regex": r"streak[=: ]+(\d+)"},
                               {"label": "Solde", "regex": r"balance[=: ]+(\d+)"}]})
@@ -107,6 +107,18 @@ json.dump(specs, open("scripts.json", "w"), indent=2, ensure_ascii=False)
 print("   ✓ AliExpress coins détecté" if specs else "   ! ali-coins non trouvé dans ~/ali-coins (scripts.json vide : ajoute-le à la main plus tard)")
 PYEOF
 fi
+"$PY" - <<'PYEOF'
+# scripts.json déjà présent : ajoute le passage quotidien automatique s'il manque (ali-coins sans cron)
+import json
+specs = json.load(open("scripts.json"))
+ch = False
+for sp in specs:
+    if sp.get("id") == "alicoins" and "daily_at" not in sp:
+        sp["daily_at"] = "09:30"; ch = True
+if ch:
+    json.dump(specs, open("scripts.json", "w"), indent=2, ensure_ascii=False)
+    print("   ✓ AliExpress coins : passage quotidien automatique à 09h30 (modifiable dans scripts.json)")
+PYEOF
 SCRIPTS=0
 "$PY" -c "import json,sys; sys.exit(0 if json.load(open('scripts.json')) else 1)" 2>/dev/null && SCRIPTS=1
 
@@ -131,9 +143,11 @@ WantedBy=multi-user.target
 UNIT
 }
 if [ "$TGTG" = 1 ]; then unit hub-tgtg "Bot hub - Too Good To Go" "$PY $DIR/tgtg_hub.py"; fi
+unit hub-medinlyon "Bot hub - MédinLyon" "$PY $DIR/medinlyon.py"
 if [ "$SCRIPTS" = 1 ]; then unit hub-scripts "Bot hub - scripts (ali-coins...)" "$PY $DIR/script_agent.py"; fi
 $SYSTEMCTL daemon-reload
 [ "$TGTG" = 1 ] && $SYSTEMCTL enable hub-tgtg >/dev/null 2>&1 && $SYSTEMCTL restart hub-tgtg && ok "hub-tgtg démarré"
+$SYSTEMCTL enable hub-medinlyon >/dev/null 2>&1 && $SYSTEMCTL restart hub-medinlyon && ok "hub-medinlyon démarré"
 [ "$SCRIPTS" = 1 ] && $SYSTEMCTL enable hub-scripts >/dev/null 2>&1 && $SYSTEMCTL restart hub-scripts && ok "hub-scripts démarré"
 
 # --- vérification --------------------------------------------------------------------------------

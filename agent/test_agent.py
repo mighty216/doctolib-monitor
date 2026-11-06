@@ -3,7 +3,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import hub_client, tgtg_hub, script_agent  # noqa: E402
+import hub_client, tgtg_hub, script_agent, medinlyon  # noqa: E402
 
 
 class FakeHub:
@@ -60,8 +60,10 @@ class TgtgTests(unittest.TestCase):
 
     def test_client_gets_proxy_and_tokens(self):
         self.assertEqual(self.client, self.bot.client)
-        self.assertIn("u-1:pw@p:80", self.bot.proxies()["http"])
+        self.assertIsNone(self.bot.proxies())                                  # direct d'abord
+        self.bot.rotate_proxy(); self.assertIn("u-1:pw@p:80", self.bot.proxies()["http"])
         self.bot.rotate_proxy(); self.assertIn("u-2:", self.bot.proxies()["https"])
+        self.bot.rotate_proxy(); self.bot.rotate_proxy(); self.assertIsNone(self.bot.proxies())  # tour complet
 
     def test_alert_on_zero_to_available_only(self):
         self.bot.settings["auto_reserve"] = False
@@ -189,6 +191,17 @@ class ScriptTests(unittest.TestCase):
         old = time.time() - 50 * 3600; os.utime(os.path.join(self.dir, "cron.log"), (old, old))
         self.assertEqual(self.bot.parse()["status"], "warn")
 
+    def test_daily_auto_run_once_per_day(self):
+        self.assertFalse(self.bot.auto_due())                       # pas de daily_at -> jamais
+        self.bot.spec["daily_at"] = "00:00"
+        self.assertTrue(self.bot.auto_due())                        # heure passée, pas encore fait aujourd'hui
+        self.assertFalse(self.bot.auto_due())                       # déjà fait aujourd'hui
+        self.bot.spec["daily_at"] = "23:59"; os.remove(self.bot.auto_file)
+        from datetime import datetime
+        if datetime.now(script_agent.PARIS).strftime("%H:%M") < "23:59":
+            self.assertFalse(self.bot.auto_due())                   # pas encore l'heure
+        self.bot.spec["daily_at"] = "bad"; self.assertFalse(self.bot.auto_due())
+
     def test_run_command_end_to_end(self):
         sh = os.path.join(self.dir, "run_all.sh")
         open(sh, "w").write("#!/bin/sh\necho 'Metrics tasks=success coins=25 streak=4'\n"); os.chmod(sh, 0o755)
@@ -233,3 +246,83 @@ class ClientTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+FRAG = ('<div class="creneaux"><label><input type="radio" name="creneau" value="1042"> 21:30</label>'
+        '<label><input type="radio" name="creneau" value="1043"> 21h45</label>'
+        '<button data-heure="22:00">22:00</button><script>var x="23:59"</script></div>')
+
+
+class MedinTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        medinlyon.SETTINGS_FILE = os.path.join(self.tmp, "m.json")
+        medinlyon.DATA_FILE = os.path.join(self.tmp, "r.json")
+        self.pages = {}
+        self.hub = FakeHub()
+        self.bot = medinlyon.Bot(self.hub, fetch=lambda centre, day: self.pages.get(day.isoformat(), ""))
+
+    def day(self, i=0): return medinlyon.datetime.now(medinlyon.PARIS).date() + medinlyon.timedelta(days=i)
+    def cmd(self, name, **a): self.bot.run_command({"id": 1, "cmd": name, "args": a}); return self.hub.results[-1]
+
+    def test_parse(self):
+        self.assertEqual(medinlyon.parse_slots(FRAG), ["21:30", "21:45", "22:00"])
+        self.assertEqual(medinlyon.parse_slots(""), [])
+
+    def test_parse_date(self):
+        t = date(2026, 11, 6) if (date := __import__("datetime").date) else None
+        self.assertEqual(medinlyon.parse_date("aujourd'hui", t), t)
+        self.assertEqual(medinlyon.parse_date("demain", t), date(2026, 11, 7))
+        self.assertEqual(medinlyon.parse_date("9/11", t), date(2026, 11, 9))
+        self.assertEqual(medinlyon.parse_date("09.11.2026", t), date(2026, 11, 9))
+        self.assertEqual(medinlyon.parse_date("2026-11-09", t), date(2026, 11, 9))
+        for bad in ("hier", "01/11", "31/02", "blabla", ""):
+            with self.assertRaises(ValueError): medinlyon.parse_date(bad, t)
+
+    def test_nothing_watched_by_default(self):
+        self.bot.scan_once(); self.assertEqual(self.hub.msgs, [])
+        self.assertIn("Rien n'est surveillé", self.bot.slots_text()); self.assertEqual(self.bot.state()["status"], "idle")
+
+    def test_only_earlier_slot_alerts(self):
+        d = self.day(); iso = d.isoformat()
+        self.assertTrue(self.cmd("today")[1]); self.assertEqual(self.bot.watched(), [iso])
+        self.pages[iso] = '<b>21:45</b> <b>22:00</b>'
+        self.bot.scan_once(); self.assertEqual(self.hub.msgs, [])                    # relevé de départ : silence
+        self.assertEqual(self.bot.data[iso]["best"], "21:45")
+        self.pages[iso] = '21:45 22:00 22:30'; self.bot.scan_once(); self.assertEqual(self.hub.msgs, [])   # plus tard : on s'en fout
+        self.bot.scan_once(); self.assertEqual(self.hub.msgs, [])                    # rien de neuf
+        self.pages[iso] = '21:15 21:45 22:00'; self.bot.scan_once()                  # plus tôt -> alerte
+        self.assertEqual(len(self.hub.msgs), 1); self.assertIn("21:15", self.hub.msgs[0][0]); self.assertIn("21:45", self.hub.msgs[0][0])
+        self.bot.scan_once(); self.assertEqual(len(self.hub.msgs), 1)                # pas de répétition
+        self.pages[iso] = '21:45'; self.bot.scan_once()                              # le créneau part : silence
+        self.pages[iso] = '21:15 21:45'; self.bot.scan_once(); self.assertEqual(len(self.hub.msgs), 2)   # il revient : alerte
+
+    def test_first_slot_after_none_alerts(self):
+        iso = self.day(1).isoformat(); self.cmd("tomorrow")
+        self.bot.scan_once()                                                         # départ : aucun créneau
+        self.pages[iso] = '20:30'; self.bot.scan_once(); self.assertEqual(len(self.hub.msgs), 1)
+
+    def test_persistence_and_errors(self):
+        iso = self.day().isoformat(); self.cmd("today"); self.pages[iso] = FRAG
+        self.bot.scan_once()
+        b2 = medinlyon.Bot(self.hub, fetch=self.bot.fetch)                           # redémarrage
+        self.assertEqual(b2.watched(), [iso]); self.assertEqual(b2.data[iso]["best"], "21:30")
+        def boom(c, d): raise OSError("réseau")
+        self.bot.fetch = boom
+        with self.assertRaises(RuntimeError): self.bot.scan_once()
+        self.assertEqual(self.bot.data[iso]["best"], "21:30")
+
+    def test_commands_state_and_limits(self):
+        self.assertFalse(self.cmd("date", date="hier")[1])
+        self.assertFalse(self.cmd("date", date="+5")[1])
+        self.assertFalse(self.cmd("date", date=self.day(3).strftime("%d/%m"))[1])         # seuls aujourd'hui / demain
+        self.assertTrue(self.cmd("date", date="demain")[1]); self.assertEqual(self.bot.watched(), [self.day(1).isoformat()])
+        self.cmd("tomorrow"); self.assertEqual(self.bot.watched(), [])                    # re-clic = on arrête
+        self.cmd("tomorrow", text="on"); self.cmd("today"); self.assertEqual(len(self.bot.watched()), 2)
+        st = self.bot.state(); json.dumps(st)
+        self.assertEqual([r[2] for r in st["tables"][0]["rows"]], ["relevé en cours"] * 2)
+        self.assertTrue(any("✅ Aujourd" in a["label"] for a in st["actions"]))
+        self.cmd("retirer", date="demain"); self.assertEqual(self.bot.watched(), [self.day().isoformat()])
+        self.cmd("set", key="interval", value="1"); self.assertEqual(self.bot.settings["interval"], 5)
+        self.cmd("pause"); self.assertFalse(self.bot.settings["enabled"]); self.assertEqual(self.bot.state()["status"], "idle")
+        self.assertFalse(self.cmd("nimporte")[1])

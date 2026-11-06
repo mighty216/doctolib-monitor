@@ -5,7 +5,8 @@ Configuration dans scripts.json (voir l'exemple écrit par l'installeur). Le hub
   - voir l'état du dernier passage (extrait du fichier journal du script) ;
   - lancer le script tout de suite (« run ») et suivre son déroulement ;
   - afficher la fin du journal.
-Le planning reste celui de ton cron : l'agent ne programme rien.
+Planning : champ facultatif « daily_at » (ex. "09:30", heure de Paris) = un passage automatique par jour,
+sans cron. Sans ce champ, l'agent ne programme rien (cron habituel ou bouton « Lancer »).
 """
 import json
 import os
@@ -56,6 +57,29 @@ class ScriptBot:
         self.out = []
         self.lock = threading.Lock()
         self.stale_hours = float(spec.get("stale_hours", 36))
+        self.auto_file = os.path.join(HERE, f".auto_{self.id}")
+
+    def auto_due(self):
+        """Passage quotidien automatique : une fois par jour, à partir de daily_at (heure de Paris)."""
+        at = self.spec.get("daily_at")
+        if not at or self.running():
+            return False
+        now = datetime.now(PARIS)
+        try:
+            hh, mm = (int(x) for x in str(at).split(":"))
+        except ValueError:
+            return False
+        if (now.hour, now.minute) < (hh, mm):
+            return False
+        try:
+            with open(self.auto_file, encoding="utf8") as f:
+                if f.read().strip() == now.strftime("%Y-%m-%d"):
+                    return False
+        except OSError:
+            pass
+        with open(self.auto_file, "w", encoding="utf8") as f:
+            f.write(now.strftime("%Y-%m-%d"))
+        return True
 
     # ------------------------------------------------------------------ exécution
     def running(self):
@@ -90,7 +114,8 @@ class ScriptBot:
         secs = int(time.time() - self.run_started)
         self.last_run = {"ts": int(time.time()), "code": code, "secs": secs}
         info = self.parse()
-        icon = "✅" if code == 0 and info["status"] != "bad" else "🔴"
+        done_codes = (0, 2)  # 2 = déjà collecté aujourd'hui (ali-coins)
+        icon = "✅" if code in done_codes and info["status"] != "bad" else "🔴"
         self.hub.event(f"Passage terminé (code {code}, {secs} s) : {info['summary']}", "ok" if icon == "✅" else "bad")
         self.hub.message(f"{icon} {self.name} : passage terminé en {secs} s (code {code})\n{info['summary']}")
         self.hub.flush(self.state())
@@ -184,6 +209,9 @@ def main():
 
     def serve(b):
         while True:
+            if b.auto_due():
+                ok, text = b.start("--no-delay" if "--no-delay" not in b.spec["run"] else "")
+                b.hub.event("Passage quotidien automatique : " + text, "ok" if ok else "bad")
             if time.time() - last[b.id] > STATE_EVERY:
                 b.hub.flush(b.state())
                 last[b.id] = time.time()
