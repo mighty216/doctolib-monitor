@@ -483,11 +483,11 @@ def main():
         sys.exit(f"Bibliotheque TGTG introuvable ({e})")
 
     class HubClient(BaseClient):
-        """Cookie DataDome régénéré automatiquement, et surtout émis via le MÊME proxy que les requêtes
-        (la lib officielle le demande sans proxy -> IP différente -> 403 permanent)."""
+        """Comme la bibliothèque d'origine, avec deux différences : le cookie DataDome est demandé via le MÊME proxy que les
+        requêtes (la lib le demande sans proxy), et ton cookie sauvegardé N'EST PAS écrasé tant qu'il fonctionne
+        (il est lié à l'IP du proxy) : il n'est remplacé qu'après un 403."""
 
         def _fetch_datadome_cookie(self, request_url):
-            self.cookie = "datadome=init"  # non vide (exigé par login()), remplacé juste après
             orig = _tgtg_mod.requests.post
 
             def post(*a, **k):
@@ -500,9 +500,25 @@ def main():
                 super()._fetch_datadome_cookie(request_url)
             finally:
                 _tgtg_mod.requests.post = orig
+            if not self.cookie or self.cookie == "datadome=init":
+                self._adopt_fresh_cookie()
+
+        def _adopt_fresh_cookie(self):
             fresh = [c.value for c in self.session.cookies if c.name == "datadome" and c.value]
             if fresh:
                 self.cookie = f"datadome={fresh[-1]}"
+
+        def _post(self, url, **kwargs):
+            self._ensure_datadome_cookie(url)
+            kw = dict(headers=self._headers, proxies=self.proxies, timeout=self.timeout, **kwargs)
+            response = self.session.post(url, **kw)
+            if response.status_code == 403:  # cookie refusé : on en demande un neuf (via le proxy) et on réessaie une fois
+                self.session.cookies.clear()
+                self.cookie = "datadome=init"
+                self._fetch_datadome_cookie(url)
+                kw["headers"] = self._headers
+                response = self.session.post(url, **kw)
+            return response
 
         def _refresh_token(self):
             """Le renouvellement du jeton est l'appel le plus surveillé par DataDome : les proxys datacenter y prennent un 403,
