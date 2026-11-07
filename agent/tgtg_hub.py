@@ -161,6 +161,40 @@ class Bot:
             os.replace(tmp, TOKEN_FILE)
             self.log("Jetons TGTG renouvelés et sauvegardés.")
 
+    def fresh_cookie(self):
+        """Cookie DataDome neuf, demandé via le proxy en cours (le cookie est lié à l'IP qui le demande)."""
+        c, mod = self.client, getattr(self, "tgtg_mod", None)
+        c.cookie = "datadome=init"
+        if mod is None or not hasattr(c, "_fetch_datadome_cookie"):
+            return
+        orig = mod.requests.post
+        mod.requests.post = lambda *a, **k: orig(*a, **({"proxies": c.proxies, **k} if c.proxies else k))
+        try:
+            c._fetch_datadome_cookie("https://apptoogoodtogo.com/api/")
+        finally:
+            mod.requests.post = orig
+        fresh = [x.value for x in c.session.cookies if x.name == "datadome" and x.value]
+        if fresh:
+            c.cookie = f"datadome={fresh[-1]}"
+
+    def refresh_if_due(self):
+        """Renouvellement du jeton (toutes les 4 h) : l'appel le plus surveillé par DataDome. Il passe en direct depuis le
+        serveur ; on remet ensuite proxy ET cookie d'avant (le cookie reçu en direct est lié à l'IP du serveur)."""
+        c = self.client
+        last = getattr(c, "last_time_token_refreshed", None)
+        if not hasattr(c, "_refresh_token") or (last and (datetime.now() - last).total_seconds() < getattr(c, "access_token_lifetime", 14400)):
+            return
+        keep_px, keep_ck = c.proxies, c.cookie
+        try:
+            c.proxies, c.last_time_token_refreshed = None, None
+            c._refresh_token()
+        except Exception:
+            c.proxies, c.cookie, c.last_time_token_refreshed = keep_px, keep_ck, None
+            c._refresh_token()  # dernier recours : via le proxy
+        finally:
+            c.proxies, c.cookie = keep_px, keep_ck
+        self.log("Jeton TGTG renouvelé")
+
     def rotate_proxy(self):
         p = self.cfg.get("tgtg", {}).get("proxy")
         if not p:
@@ -176,7 +210,7 @@ class Bot:
                 self.tried_saved.add(self.proxy_index)
                 self.client.cookie = self.saved_cookie if "=" in self.saved_cookie else "datadome=" + self.saved_cookie
             else:
-                self.client.cookie = "datadome=init"
+                self.fresh_cookie()
         except Exception:
             pass
         self.log(f"Rotation du proxy -> {p['user_base']}{self.proxy_index}", "warn")
@@ -202,6 +236,7 @@ class Bot:
 
     # ------------------------------------------------------------------ scan
     def scan_once(self):
+        self.refresh_if_due()
         raw = self.client.get_items(favorites_only=True)
         found = {}
         for it in raw:
@@ -478,71 +513,20 @@ def main():
     cfg = load_config()
     try:
         import tgtg as _tgtg_mod
-        from tgtg_scanner.tgtg_client import TgtgClient as BaseClient
+        from tgtg_scanner.tgtg_client import TgtgClient, normalize_cookie
     except ImportError as e:
         sys.exit(f"Bibliotheque TGTG introuvable ({e})")
 
-    class HubClient(BaseClient):
-        """Comme la bibliothèque d'origine, avec deux différences : le cookie DataDome est demandé via le MÊME proxy que les
-        requêtes (la lib le demande sans proxy), et ton cookie sauvegardé N'EST PAS écrasé tant qu'il fonctionne
-        (il est lié à l'IP du proxy) : il n'est remplacé qu'après un 403."""
-
-        def _fetch_datadome_cookie(self, request_url):
-            orig = _tgtg_mod.requests.post
-
-            def post(*a, **k):
-                if self.proxies:
-                    k.setdefault("proxies", self.proxies)
-                return orig(*a, **k)
-
-            _tgtg_mod.requests.post = post
-            try:
-                super()._fetch_datadome_cookie(request_url)
-            finally:
-                _tgtg_mod.requests.post = orig
-            if not self.cookie or self.cookie == "datadome=init":
-                self._adopt_fresh_cookie()
-
-        def _adopt_fresh_cookie(self):
-            fresh = [c.value for c in self.session.cookies if c.name == "datadome" and c.value]
-            if fresh:
-                self.cookie = f"datadome={fresh[-1]}"
-
-        def _post(self, url, **kwargs):
-            self._ensure_datadome_cookie(url)
-            kw = dict(headers=self._headers, proxies=self.proxies, timeout=self.timeout, **kwargs)
-            response = self.session.post(url, **kw)
-            if response.status_code == 403:  # cookie refusé : on en demande un neuf (via le proxy) et on réessaie une fois
-                self.session.cookies.clear()
-                self.cookie = "datadome=init"
-                self._fetch_datadome_cookie(url)
-                kw["headers"] = self._headers
-                response = self.session.post(url, **kw)
-            return response
-
-        def _refresh_token(self):
-            """Le renouvellement du jeton est l'appel le plus surveillé par DataDome : les proxys datacenter y prennent un 403,
-            alors qu'il passe depuis l'IP du serveur. On le fait donc en direct, puis on remet proxy ET cookie d'avant
-            (le cookie renvoyé en direct est lié à l'IP du serveur, il casserait les appels suivants via le proxy)."""
-            keep_px, keep_cookie = self.proxies, self.cookie
-            try:
-                self.proxies = None
-                super()._refresh_token()
-            except Exception:
-                self.proxies = keep_px
-                self.cookie = keep_cookie
-                super()._refresh_token()  # dernier recours : via le proxy
-            finally:
-                self.proxies, self.cookie = keep_px, keep_cookie
-
     def factory(access_token, refresh_token, datadome_cookie, proxies):
-        # le cookie sauvegardé est lié à une IP : on repart toujours d'un cookie neuf
-        return HubClient(access_token=access_token, refresh_token=refresh_token, proxies=proxies,
-                         last_time_token_refreshed=datetime.now() if token_valid_for(access_token) else None,
-                         cookie=(("datadome=" + datadome_cookie) if datadome_cookie and "=" not in datadome_cookie else datadome_cookie) or "datadome=init")
+        # Client de la bibliothèque, SANS modification : c'est exactement ce que faisait l'ancien script (qui marchait).
+        return TgtgClient(access_token=access_token, refresh_token=refresh_token, proxies=proxies,
+                          cookie=normalize_cookie(datadome_cookie) or "datadome=init",
+                          last_time_token_refreshed=datetime.now() if token_valid_for(access_token) else None)
 
     hub = Hub("tgtg", "Too Good To Go", cfg, log=lambda m: print(m, flush=True))
-    Bot(hub, cfg, factory).run()
+    bot = Bot(hub, cfg, factory)
+    bot.tgtg_mod = _tgtg_mod
+    bot.run()
 
 
 if __name__ == "__main__":
