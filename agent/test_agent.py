@@ -162,6 +162,16 @@ class TgtgTests(unittest.TestCase):
         self.assertFalse(tgtg_hub.token_valid_for(jwt(time.time() + 600)))
         self.assertFalse(tgtg_hub.token_valid_for("pas-un-jwt")); self.assertFalse(tgtg_hub.token_valid_for(None))
 
+    def test_stop_and_resume_button(self):
+        self.assertTrue(self.bot.in_hours() or True)
+        self.bot.settings.update(hour_start=0, hour_end=24); self.assertTrue(self.bot.in_hours())
+        self.assertTrue(any(a["id"] == "stop" for a in self.bot.state()["actions"]))
+        self.bot.run_command({"id": 1, "cmd": "stop", "args": {}})
+        self.assertFalse(self.bot.in_hours()); st = self.bot.state()
+        self.assertEqual(st["status"], "idle"); self.assertTrue(any(a["id"] == "resume" for a in st["actions"]))
+        self.assertFalse(json.load(open(tgtg_hub.CONFIG_FILE))["enabled"])            # mémorisé après redémarrage
+        self.bot.run_command({"id": 2, "cmd": "resume", "args": {}}); self.assertTrue(self.bot.in_hours())
+
     def test_hours_window(self):
         self.bot.settings.update(hour_start=22, hour_end=6)   # plage qui passe minuit
         h = tgtg_hub.now_paris().hour
