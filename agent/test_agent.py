@@ -60,10 +60,9 @@ class TgtgTests(unittest.TestCase):
 
     def test_client_gets_proxy_and_tokens(self):
         self.assertEqual(self.client, self.bot.client)
-        self.assertIsNone(self.bot.proxies())                                  # direct d'abord
-        self.bot.rotate_proxy(); self.assertIn("u-1:pw@p:80", self.bot.proxies()["http"])
+        self.assertIn("u-1:pw@p:80", self.bot.proxies()["http"])               # jamais en direct
         self.bot.rotate_proxy(); self.assertIn("u-2:", self.bot.proxies()["https"])
-        self.bot.rotate_proxy(); self.bot.rotate_proxy(); self.assertIsNone(self.bot.proxies())  # tour complet
+        self.bot.rotate_proxy(); self.bot.rotate_proxy(); self.assertIn("u-1:", self.bot.proxies()["http"])  # tour complet
 
     def test_alert_on_zero_to_available_only(self):
         self.bot.settings["auto_reserve"] = False

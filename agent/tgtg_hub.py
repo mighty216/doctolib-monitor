@@ -45,7 +45,7 @@ class Bot:
         self.last_ok = time.time()
         self.fail_count = 0
         self.down_alerted = False
-        self.proxy_index = 0  # 0 = sans proxy (l'IP du serveur passe) ; 1..N = proxys Webshare en secours
+        self.proxy_index = 1  # toujours via les proxys Webshare tournants (comme l'ancien script), jamais l'IP du serveur
         self.orders = []
         self.stop = False
         self.reboot = False
@@ -98,7 +98,7 @@ class Bot:
     # ------------------------------------------------------------------ client TGTG
     def proxies(self):
         p = self.cfg.get("tgtg", {}).get("proxy")
-        if not p or self.proxy_index == 0:
+        if not p:
             return None
         user = f"{p['user_base']}{self.proxy_index}"
         url = f"http://{user}:{p['password']}@{p['host']}:{p.get('port', 80)}"
@@ -137,14 +137,14 @@ class Bot:
         p = self.cfg.get("tgtg", {}).get("proxy")
         if not p:
             return
-        self.proxy_index = (self.proxy_index + 1) % (int(p.get("count", 1)) + 1)
+        self.proxy_index = (self.proxy_index % int(p.get("count", 1))) + 1
         try:
             self.client.proxies = self.proxies()
             self.client.session.cookies.clear()  # nouvelle IP -> nouveau cookie DataDome
             self.client.cookie = "datadome=init"
         except Exception:
             pass
-        self.log("Rotation du proxy -> " + (f"{p['user_base']}{self.proxy_index}" if self.proxy_index else "connexion directe"), "warn")
+        self.log(f"Rotation du proxy -> {p['user_base']}{self.proxy_index}", "warn")
 
     # ------------------------------------------------------------------ extraction d'un favori
     @staticmethod
