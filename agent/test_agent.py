@@ -155,6 +155,13 @@ class TgtgTests(unittest.TestCase):
         b2 = tgtg_hub.Bot(self.hub, self.bot.cfg, lambda **kw: self.client); b2.connect()   # redémarrage
         self.assertEqual(b2.proxy_index, 1)
 
+    def test_token_validity_helper(self):
+        import base64 as b
+        def jwt(exp): return "h." + b.urlsafe_b64encode(json.dumps({"exp": exp}).encode()).decode().rstrip("=") + ".s"
+        self.assertTrue(tgtg_hub.token_valid_for(jwt(time.time() + 7200)))
+        self.assertFalse(tgtg_hub.token_valid_for(jwt(time.time() + 600)))
+        self.assertFalse(tgtg_hub.token_valid_for("pas-un-jwt")); self.assertFalse(tgtg_hub.token_valid_for(None))
+
     def test_hours_window(self):
         self.bot.settings.update(hour_start=22, hour_end=6)   # plage qui passe minuit
         h = tgtg_hub.now_paris().hour

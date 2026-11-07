@@ -3,6 +3,7 @@
 Bot Too Good To Go branché sur le hub. Remplace tgtg_monitor.py (mêmes jetons, mêmes fonctions) :
 plus de polling Telegram ici, le hub reçoit les commandes et les relaie. Tout se pilote aussi depuis l'interface web.
 """
+import base64
 import collections
 import json
 import os
@@ -20,6 +21,16 @@ TOKEN_FILE = os.path.join(HERE, "tgtg_tokens.json")
 CONFIG_FILE = os.path.join(HERE, "tgtg_hub_config.json")
 MIN_INTERVAL = 15
 STATE_EVERY = 20  # s
+
+
+def token_valid_for(access_token, minutes=30):
+    """Vrai si le jeton d'accès (JWT) reste valable au moins `minutes` : inutile de le renouveler au démarrage."""
+    try:
+        part = str(access_token).split(".")[1]
+        exp = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))["exp"]
+        return exp - time.time() > minutes * 60
+    except Exception:
+        return False
 
 
 def now_paris():
@@ -488,9 +499,25 @@ def main():
             if fresh:
                 self.cookie = f"datadome={fresh[-1]}"
 
+        def _refresh_token(self):
+            """Le renouvellement du jeton est l'appel le plus surveillé par DataDome : les proxys datacenter y prennent un 403,
+            alors qu'il passe depuis l'IP du serveur. On le fait donc en direct, puis on remet proxy ET cookie d'avant
+            (le cookie renvoyé en direct est lié à l'IP du serveur, il casserait les appels suivants via le proxy)."""
+            keep_px, keep_cookie = self.proxies, self.cookie
+            try:
+                self.proxies = None
+                super()._refresh_token()
+            except Exception:
+                self.proxies = keep_px
+                self.cookie = keep_cookie
+                super()._refresh_token()  # dernier recours : via le proxy
+            finally:
+                self.proxies, self.cookie = keep_px, keep_cookie
+
     def factory(access_token, refresh_token, datadome_cookie, proxies):
         # le cookie sauvegardé est lié à une IP : on repart toujours d'un cookie neuf
         return HubClient(access_token=access_token, refresh_token=refresh_token, proxies=proxies,
+                         last_time_token_refreshed=datetime.now() if token_valid_for(access_token) else None,
                          cookie=(("datadome=" + datadome_cookie) if datadome_cookie and "=" not in datadome_cookie else datadome_cookie) or "datadome=init")
 
     hub = Hub("tgtg", "Too Good To Go", cfg, log=lambda m: print(m, flush=True))
