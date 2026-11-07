@@ -46,6 +46,9 @@ class Bot:
         self.fail_count = 0
         self.down_alerted = False
         self.proxy_index = 1  # toujours via les proxys Webshare tournants (comme l'ancien script), jamais l'IP du serveur
+        self.cookies = {}        # n° de proxy -> cookie DataDome qui a FONCTIONNÉ avec ce proxy (il est lié à son IP)
+        self.saved_cookie = None  # cookie d'origine du fichier de jetons, essayé une fois sur chaque proxy
+        self.tried_saved = set()
         self.orders = []
         self.stop = False
         self.reboot = False
@@ -110,9 +113,17 @@ class Bot:
                 t = json.load(f)
         except Exception as e:
             raise SystemExit(f"Jetons TGTG introuvables ({TOKEN_FILE}) : {e}")
+        self.cookies = {str(k): v for k, v in (t.get("datadome_by_proxy") or {}).items() if v}
+        self.saved_cookie = t.get("datadome_cookie") or None
+        count = int((self.cfg.get("tgtg", {}).get("proxy") or {}).get("count", 1) or 1)
+        try:
+            self.proxy_index = min(max(1, int(t.get("proxy_index") or 1)), count)  # on repart du dernier proxy qui marchait
+        except (TypeError, ValueError):
+            self.proxy_index = 1
+        self.tried_saved.add(self.proxy_index)
         self.client = self.client_factory(
             access_token=t.get("access_token", ""), refresh_token=t.get("refresh_token", ""),
-            datadome_cookie=t.get("datadome_cookie") or None, proxies=self.proxies())
+            datadome_cookie=self.cookies.get(str(self.proxy_index)) or self.saved_cookie, proxies=self.proxies())
         self.tokens_snapshot = json.dumps(t, sort_keys=True)
 
     def save_tokens(self):
@@ -126,6 +137,9 @@ class Bot:
         except Exception:
             old = {}
         new = {**old, **{k: v for k, v in cur.items() if v}}
+        new["proxy_index"] = self.proxy_index
+        if self.cookies:
+            new["datadome_by_proxy"] = dict(self.cookies)
         if json.dumps(new, sort_keys=True) != json.dumps(old, sort_keys=True):
             tmp = TOKEN_FILE + ".tmp"
             with open(tmp, "w", encoding="utf8") as f:
@@ -140,8 +154,15 @@ class Bot:
         self.proxy_index = (self.proxy_index % int(p.get("count", 1))) + 1
         try:
             self.client.proxies = self.proxies()
-            self.client.session.cookies.clear()  # nouvelle IP -> nouveau cookie DataDome
-            self.client.cookie = "datadome=init"
+            self.client.session.cookies.clear()  # nouvelle IP : cookie connu pour ce proxy, sinon l'original (1 essai), sinon neuf
+            key = str(self.proxy_index)
+            if self.cookies.get(key):
+                self.client.cookie = self.cookies[key]
+            elif self.saved_cookie and self.proxy_index not in self.tried_saved:
+                self.tried_saved.add(self.proxy_index)
+                self.client.cookie = self.saved_cookie if "=" in self.saved_cookie else "datadome=" + self.saved_cookie
+            else:
+                self.client.cookie = "datadome=init"
         except Exception:
             pass
         self.log(f"Rotation du proxy -> {p['user_base']}{self.proxy_index}", "warn")
@@ -176,6 +197,9 @@ class Bot:
             self.items = found
         self.last_scan = time.time()
         self.last_ok = self.last_scan
+        ck = getattr(self.client, "cookie", None)
+        if isinstance(ck, str) and ck.startswith("datadome=") and "datadome=init" not in ck:
+            self.cookies[str(self.proxy_index)] = ck  # cette paire proxy + cookie fonctionne : on la mémorise
         if self.fail_count >= 3 or self.down_alerted:
             self.hub.message("✅ TGTG : les scans fonctionnent de nouveau.")
             self.log("Scans de nouveau OK", "ok")
@@ -230,7 +254,7 @@ class Bot:
                 self.fail_count += 1
                 self.log(f"Scan en erreur ({self.fail_count}) : {str(e)[:150]}", "warn")
                 blocked = "403" in str(e)
-                if blocked or self.fail_count % 2 == 0:  # blocage DataDome : on change d'IP tout de suite
+                if self.fail_count % 2 == 0:  # un 403 isolé se réessaie sur le même proxy ; 2 d'affilée : on change de proxy
                     self.rotate_proxy()
                 if time.time() - self.last_ok > 600 and not self.down_alerted:
                     self.down_alerted = True

@@ -140,6 +140,21 @@ class TgtgTests(unittest.TestCase):
         self.client.fail = None; self.bot.scan_once()
         self.assertTrue(any("de nouveau" in m[0] for m in self.hub.msgs))
 
+    def test_working_proxy_and_cookie_remembered(self):
+        self.bot.client.cookie = "datadome=GOOD"; self.client.items = []
+        self.client.session = types.SimpleNamespace(cookies=types.SimpleNamespace(clear=lambda: None))
+        self.bot.scan_once(); self.bot.save_tokens()
+        saved = json.load(open(tgtg_hub.TOKEN_FILE))
+        self.assertEqual(saved["proxy_index"], 1); self.assertEqual(saved["datadome_by_proxy"], {"1": "datadome=GOOD"})
+        self.bot.rotate_proxy(); self.assertEqual(self.bot.proxy_index, 2)
+        self.assertEqual(self.bot.client.cookie, "datadome=D")                    # cookie d'origine, 1 essai sur le proxy 2
+        self.bot.rotate_proxy(); self.bot.rotate_proxy(); self.assertEqual(self.bot.proxy_index, 1)
+        self.assertEqual(self.bot.client.cookie, "datadome=GOOD")                 # retour sur le proxy qui marchait : son cookie
+        self.bot.rotate_proxy(); self.bot.rotate_proxy(); self.bot.rotate_proxy(); self.assertEqual(self.bot.proxy_index, 1)
+        self.assertEqual(self.bot.client.cookie, "datadome=GOOD")
+        b2 = tgtg_hub.Bot(self.hub, self.bot.cfg, lambda **kw: self.client); b2.connect()   # redémarrage
+        self.assertEqual(b2.proxy_index, 1)
+
     def test_hours_window(self):
         self.bot.settings.update(hour_start=22, hour_end=6)   # plage qui passe minuit
         h = tgtg_hub.now_paris().hour
