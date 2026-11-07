@@ -220,6 +220,8 @@ class Bot:
         while not self.stop:
             try:
                 if not self.in_hours():
+                    self.last_ok = time.time()  # hors plage : le compteur « sans succès depuis 10 min » repart de zéro à l'ouverture
+                    self.down_alerted = False
                     time.sleep(30)
                     continue
                 self.scan_once()
