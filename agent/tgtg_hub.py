@@ -268,7 +268,7 @@ class Bot:
                 self.fail_count += 1
                 self.log(f"Scan en erreur ({self.fail_count}) : {str(e)[:150]}", "warn")
                 blocked = "403" in str(e)
-                if self.fail_count % 2 == 0:  # un 403 isolé se réessaie sur le même proxy ; 2 d'affilée : on change de proxy
+                if self.fail_count >= 10 and self.fail_count % 5 == 0:  # on reste sur le proxy + cookie qui marchent ; changement seulement après un long échec
                     self.rotate_proxy()
                 if time.time() - self.last_ok > 600 and not self.down_alerted:
                     self.down_alerted = True
