@@ -23,6 +23,9 @@ MIN_INTERVAL = 15
 STATE_EVERY = 20  # s
 
 
+BACKOFF = (5, 5, 30, 60, 120, 300, 600)  # secondes d'attente après le 1er, 2e, 3e… échec 403 d'affilée
+
+
 def token_valid_for(access_token, minutes=30):
     """Vrai si le jeton d'accès (JWT) reste valable au moins `minutes` : inutile de le renouveler au démarrage."""
     try:
@@ -271,7 +274,9 @@ class Bot:
                     self.down_alerted = True
                     self.hub.message(f"🔴 TGTG : plus aucun scan réussi depuis 10 min ({str(e)[:100]}). Jeton mort, proxy HS ou blocage ?")
                     self.log("Plus de scan réussi depuis 10 min", "bad")
-                time.sleep(4 if blocked else 15)
+                # blocage DataDome : on ralentit de plus en plus (le blocage dépend du rythme des requêtes et est
+                # temporaire ; marteler toutes les 4 s sur tous les proxys l'entretient)
+                time.sleep(BACKOFF[min(self.fail_count - 1, len(BACKOFF) - 1)] if blocked else 15)
                 continue
             time.sleep(self.settings["interval"])
 
