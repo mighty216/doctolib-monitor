@@ -2,6 +2,7 @@
 Accès à Vinted : une seule session HTTP qui imite Chrome (empreinte TLS/HTTP2 via curl_cffi), cookie de session
 renouvelé tout seul. Lecture seule : recherche du catalogue et état d'une annonce. Aucun achat, aucun message.
 """
+import json
 import random
 import re
 import threading
@@ -61,6 +62,7 @@ class Vinted:
         self.last_call = 0.0
         self.last_status = "jamais appelé"
         self.calls = 0
+        self.mode = "api"  # bascule sur "html" si Vinted refuse la route JSON du catalogue
 
     def _new_session(self):
         if cffi is None:
@@ -114,8 +116,24 @@ class Vinted:
             params["price_from"] = price_from
         if price_to:
             params["price_to"] = price_to
-        data = self._get("/api/v2/catalog/items", params)
-        return [parse_item(i) for i in data.get("items", []) if i.get("id")]
+        if self.mode == "api":
+            try:
+                data = self._get("/api/v2/catalog/items", params)
+                return [parse_item(i) for i in data.get("items", []) if i.get("id")]
+            except SourceError as e:
+                if e.code not in (404, 200):  # 403/429/réseau : vrai blocage, on ne change pas de méthode
+                    raise
+                self.mode = "html"  # route fermée ou réponse non JSON : pages publiques du catalogue
+        from urllib.parse import urlencode
+        code, html_text = self.page("/catalog?" + urlencode({k: v for k, v in params.items() if k != "per_page"}))
+        if code >= 400:
+            raise SourceError(code, f"catalogue HTML : HTTP {code}")
+        items = parse_catalog_html(html_text)
+        if not items and "/items/" in html_text:
+            self.last_status = "catalogue HTML illisible (format Vinted changé)"
+            raise SourceError(200, self.last_status)
+        self.last_status = "OK (pages HTML)"
+        return items
 
     def page(self, path):
         """Page HTML publique (statut HTTP, texte). 404 n'est pas une erreur ici : c'est une information."""
@@ -174,3 +192,46 @@ def parse_item_page(code, text):
     if avail == "instock":
         return "online"
     return "unknown"
+
+
+_ITEM_START = re.compile(r'\{"id":(\d{6,}),')
+
+
+def _field(chunk, rx, default=""):
+    m = re.search(rx, chunk)
+    return m.group(1) if m else default
+
+
+def parse_catalog_html(text):
+    """
+    Annonces d'une page /catalog : Vinted embarque les données des articles (JSON, souvent échappé) dans la page.
+    Lecture tolérante champ par champ, bornée à chaque objet article, pour survivre à l'ordre des champs.
+    """
+    t = (text or "").replace('\\"', '"').replace("\\u0026", "&")
+    starts = [m for m in _ITEM_START.finditer(t)]
+    out, seen = [], set()
+    for i, m in enumerate(starts):
+        end = starts[i + 1].start() if i + 1 < len(starts) else m.start() + 4000
+        chunk = t[m.start():min(end, m.start() + 4000)]
+        title = _field(chunk, r'"title":"((?:[^"\\]|\\.)*)"')
+        price = _field(chunk, r'"price":\{[^}]*?"amount":"?([\d.]+)')
+        iid = m.group(1)
+        if not title or not price or iid in seen:
+            continue  # pas un article (ex. objet utilisateur ou photo)
+        seen.add(iid)
+        try:
+            title = json.loads('"' + title + '"')
+        except ValueError:
+            pass
+        out.append(parse_item({
+            "id": iid, "title": title, "price": {"amount": price},
+            "total_item_price": {"amount": _field(chunk, r'"total_item_price":\{[^}]*?"amount":"?([\d.]+)', "0")},
+            "status": _field(chunk, r'"status":"([^"]*)"'),
+            "favourite_count": _field(chunk, r'"favourite_count":(\d+)', "0"),
+            "user": {"id": _field(chunk, r'"user":\{[^{}]*?"id":(\d+)'),
+                     "business": _field(chunk, r'"business":(true|false)') == "true"},
+            "photo": {"high_resolution": {"timestamp": _field(chunk, r'"timestamp":(\d{9,})', "0")}},
+            "url": _field(chunk, r'"url":"(https://www\.vinted\.[a-z.]+/items/[^"]+)"'),
+            "brand_title": _field(chunk, r'"brand_title":"([^"]*)"'),
+        }))
+    return out

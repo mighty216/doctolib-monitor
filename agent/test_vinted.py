@@ -89,6 +89,35 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(parse_item_page(404, ""), "gone")
         self.assertEqual(parse_item_page(200, "<html>captcha</html>"), "unknown")
 
+    def test_catalog_html_fallback(self):
+        from vinted_source import parse_catalog_html
+        # forme RSC échappée, champs dans un ordre quelconque, objets parasites (utilisateur, photo)
+        raw = ('self.__next_f.push([1,"{\\"id\\":7012345678,\\"title\\":\\"Lego Technic 42083 \\u00e9tat neuf\\",'
+               '\\"price\\":{\\"amount\\":\\"6.5\\",\\"currency_code\\":\\"EUR\\"},\\"status\\":\\"Neuf sans étiquette\\",'
+               '\\"user\\":{\\"id\\":991,\\"business\\":false},\\"favourite_count\\":3,'
+               '\\"photo\\":{\\"high_resolution\\":{\\"timestamp\\":1762700000}}}'
+               '{\\"id\\":99887766,\\"login\\":\\"bob\\"}'
+               '{\\"id\\":7012345679,\\"favourite_count\\":0,\\"price\\":{\\"amount\\":\\"12\\"},\\"title\\":\\"Naruto tome 58\\"}"])')
+        items = parse_catalog_html(raw)
+        self.assertEqual([i["id"] for i in items], ["7012345678", "7012345679"])
+        a = items[0]
+        self.assertEqual((a["title"], a["price"], a["seller"], a["fav"], a["ts"]),
+                         ("Lego Technic 42083 état neuf", 6.5, "991", 3, 1762700000))
+        self.assertEqual(items[1]["url"], "https://www.vinted.fr/items/7012345679")
+
+    def test_source_switches_to_html_on_404(self):
+        import vinted_source as vs
+        v = vs.Vinted()
+        v._get = lambda *a, **k: (_ for _ in ()).throw(vs.SourceError(404))
+        v.page = lambda path: (200, '{"id":7000000001,"title":"Lego 42083","price":{"amount":"5"}}')
+        self.assertEqual([i["id"] for i in v.search("lego 42083")], ["7000000001"])
+        self.assertEqual(v.mode, "html")
+        v2 = vs.Vinted()
+        v2._get = lambda *a, **k: (_ for _ in ()).throw(vs.SourceError(403))
+        with self.assertRaises(vs.SourceError):
+            v2.search("lego")
+        self.assertEqual(v2.mode, "api")  # un blocage ne fait pas changer de méthode
+
     def test_parse_item(self):
         it = parse_item({"id": 7, "title": " Lego 42083 ", "price": {"amount": "12.5"}, "total_item_price": {"amount": "13.83"},
                          "user": {"id": 9, "business": True}, "photo": {"high_resolution": {"timestamp": 1700000000}},
