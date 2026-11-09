@@ -289,8 +289,11 @@ def main():
     log(f"proxy : {'oui' if PROXY else 'non (IP du serveur : Doctolib risque de refuser)'}; empreinte Chrome : {'oui' if cffi else 'non'}")
     cfg = worker("GET", "/api/ingest/config")
     if not cfg.get("watches"):
-        log("Le Worker n'a aucun cabinet valide :", cfg.get("errors"))
-        return 3
+        if cfg.get("errors"):
+            log("Le Worker n'a aucun cabinet valide :", cfg.get("errors"))
+            return 3
+        log("Aucune surveillance Doctolib active : rien à vérifier.")  # pas une erreur (tout est en pause ou supprimé)
+        return 0
     go, why = should_run(cfg)
     log(("Passage : " if go else "Pas de passage : ") + why)
     if not go:
