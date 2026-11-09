@@ -18,6 +18,25 @@ from hub_client import Hub, HERE, load_config
 
 PARIS = ZoneInfo("Europe/Paris")
 TOKEN_FILE = os.path.join(HERE, "tgtg_tokens.json")
+
+UA_FILE = os.path.join(HERE, "tgtg_ua.txt")
+DEFAULT_UA = "TGTG/26.7.2 Dalvik/2.1.0 (Linux; U; Android 14; Pixel 8 Pro Build/UP1A.231005.007)"
+
+
+def stable_user_agent():
+    """UA de l'app TGTG récent et fixe. Surcharge : variable TGTG_USER_AGENT ou fichier tgtg_ua.txt."""
+    env = os.environ.get("TGTG_USER_AGENT", "").strip()
+    if env:
+        return env
+    try:
+        with open(UA_FILE, encoding="utf8") as f:
+            v = f.read().strip()
+            if v:
+                return v
+    except OSError:
+        pass
+    return DEFAULT_UA
+
 CONFIG_FILE = os.path.join(HERE, "tgtg_hub_config.json")
 MIN_INTERVAL = 15
 STATE_EVERY = 20  # s
@@ -537,11 +556,25 @@ def main():
     except ImportError as e:
         sys.exit(f"Bibliotheque TGTG introuvable ({e})")
 
+    ua = stable_user_agent()
+    print(f"User-Agent TGTG: {ua}", flush=True)
+
     def factory(access_token, refresh_token, datadome_cookie, proxies):
-        # Client de la bibliothèque, SANS modification : c'est exactement ce que faisait l'ancien script (qui marchait).
-        return TgtgClient(access_token=access_token, refresh_token=refresh_token, proxies=proxies,
-                          cookie=normalize_cookie(datadome_cookie) or "datadome=init",
-                          last_time_token_refreshed=datetime.now() if token_valid_for(access_token) else None)
+        # Client de la bibliothèque + UN user-agent récent et STABLE (la lib en tire un au hasard, avec une vieille
+        # version d'app si Google Play ne répond pas ; le cookie DataDome est lié au UA -> 403 à chaque redémarrage).
+        kw = dict(access_token=access_token, refresh_token=refresh_token, proxies=proxies,
+                  cookie=normalize_cookie(datadome_cookie) or "datadome=init",
+                  last_time_token_refreshed=datetime.now() if token_valid_for(access_token) else None)
+        try:
+            c = TgtgClient(user_agent=ua, **kw)
+        except TypeError:
+            c = TgtgClient(**kw)
+        try:
+            c.user_agent = ua
+            c.session.headers["user-agent"] = ua
+        except Exception:
+            pass
+        return c
 
     hub = Hub("tgtg", "Too Good To Go", cfg, log=lambda m: print(m, flush=True))
     bot = Bot(hub, cfg, factory)
