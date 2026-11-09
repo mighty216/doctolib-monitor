@@ -80,6 +80,15 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(core.evaluate(5, m, SETTINGS)["suspect"])
         self.assertFalse(core.evaluate(10, m, SETTINGS)["suspect"])
 
+    def test_item_page_status(self):
+        from vinted_source import parse_item_page
+        ld = '<script type="application/ld+json">{"@type":"Product","offers":{"availability":"https://schema.org/%s"}}</script>'
+        self.assertEqual(parse_item_page(200, ld % "SoldOut"), "sold")
+        self.assertEqual(parse_item_page(200, ld % "InStock"), "online")
+        self.assertEqual(parse_item_page(200, (ld % "InStock") + '{\\"is_reserved\\":true}'), "reserved")
+        self.assertEqual(parse_item_page(404, ""), "gone")
+        self.assertEqual(parse_item_page(200, "<html>captcha</html>"), "unknown")
+
     def test_parse_item(self):
         it = parse_item({"id": 7, "title": " Lego 42083 ", "price": {"amount": "12.5"}, "total_item_price": {"amount": "13.83"},
                          "user": {"id": 9, "business": True}, "photo": {"high_resolution": {"timestamp": 1700000000}},
@@ -195,12 +204,16 @@ class BotTests(unittest.TestCase):
         self.now += 2 * 86400        # ils ne sont plus revus dans les recherches
         for i in range(3):
             self.src.states[str(100 + i)] = "sold"
+        self.src.states["103"] = "gone"       # disparue sans réservation : ambigu, pas comptée
+        self.bot.check_sold(limit=10)
+        self.bot.store.x("UPDATE listings SET state = 'reserved', last_check = 0 WHERE id = '104'")
+        self.src.states["104"] = "gone"       # réservée puis disparue : comptée comme vente
         self.bot.check_sold(limit=10)
         sold = self.bot.store.sold_prices(key, "occ", self.now - 86400 * 90)
-        self.assertEqual(sorted(sold), [35, 38, 40])
+        self.assertEqual(sorted(sold), [35, 38, 40, 45])
         self.now += 7 * 3600  # cache expiré
         m = self.bot.market(key, "occ")
-        self.assertEqual((m["basis"], m["price"]), ("vendus", 38))
+        self.assertEqual((m["basis"], m["price"]), ("vendus", 39))
 
     def test_false_positive_twice_excludes_product(self):
         self.mature("Mario Kart 8 Deluxe switch", [36, 38, 40, 41, 42])

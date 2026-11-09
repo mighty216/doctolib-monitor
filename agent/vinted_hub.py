@@ -365,16 +365,20 @@ class Bot:
         """Suit les comparables disparus des recherches : c'est ce qui construit la base des VRAIS prix de vente."""
         now = int(self.clock())
         rows = self.store.q(
-            """SELECT id, price FROM listings WHERE state IN ('online', 'reserved') AND key IS NOT NULL
+            """SELECT id, price, state FROM listings WHERE state IN ('online', 'reserved') AND key IS NOT NULL
                AND last_seen < ? AND last_check < ? AND first_seen > ?
                ORDER BY (key IN (SELECT key FROM products)) DESC, last_check, last_seen LIMIT ?""",
             (now - 6 * 3600, now - 12 * 3600, now - 45 * DAY, limit))
         for r in rows:
             st = self.src.item_state(r["id"])
-            if st == "sold":
+            # « réservée puis disparue » : une vente quasi certaine ; disparue sans réservation : ambigu, on ne compte pas
+            if st == "sold" or (st == "gone" and r["state"] == "reserved"):
                 self.store.x("UPDATE listings SET state = 'sold', sold_at = ?, sold_price = price, last_check = ? WHERE id = ?",
                              (now, now, r["id"]))
                 self.stats["sold_found"] += 1
+            elif st == "unknown":
+                self.store.x("UPDATE listings SET last_check = ? WHERE id = ?", (now, r["id"]))
+                self.stats["unknown_pages"] = self.stats.get("unknown_pages", 0) + 1
             else:
                 self.store.x("UPDATE listings SET state = ?, last_check = ? WHERE id = ?", (st, now, r["id"]))
 
@@ -612,6 +616,7 @@ class Bot:
                 {"label": "Achetées / faux positifs", "value": f"{n_bought} / {n_fp}"},
                 {"label": "Annonces suivies", "value": str(n_listings)},
                 {"label": "Ventes constatées", "value": str(n_sold)},
+                {"label": "Pages annonce illisibles", "value": str(self.stats.get("unknown_pages", 0))},
                 {"label": "Produits chiffrés (24 h)", "value": str(n_priced)},
                 {"label": "Baisses de prix vues", "value": str(self.stats["drops"])},
                 {"label": "Appels Vinted", "value": str(self.src.calls)},

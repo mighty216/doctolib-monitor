@@ -3,6 +3,7 @@ Accès à Vinted : une seule session HTTP qui imite Chrome (empreinte TLS/HTTP2 
 renouvelé tout seul. Lecture seule : recherche du catalogue et état d'une annonce. Aucun achat, aucun message.
 """
 import random
+import re
 import threading
 import time
 
@@ -116,19 +117,60 @@ class Vinted:
         data = self._get("/api/v2/catalog/items", params)
         return [parse_item(i) for i in data.get("items", []) if i.get("id")]
 
+    def page(self, path):
+        """Page HTML publique (statut HTTP, texte). 404 n'est pas une erreur ici : c'est une information."""
+        with self.lock:
+            wait = self.min_gap * random.uniform(0.8, 1.6) - (time.time() - self.last_call)
+            if wait > 0:
+                time.sleep(wait)
+            try:
+                if self.session is None:
+                    self._new_session()
+                r = self.session.get(BASE + path, timeout=25, allow_redirects=True,
+                                     headers={"Accept": "text/html,application/xhtml+xml"})
+            except SourceError:
+                raise
+            except Exception as e:
+                self.session = None
+                self.last_status = f"réseau : {type(e).__name__}"
+                raise SourceError(0, self.last_status)
+            finally:
+                self.last_call = time.time()
+                self.calls += 1
+        if r.status_code in (403, 429) or r.status_code >= 500:
+            self.session = None
+            self.last_status = f"page annonce : HTTP {r.status_code}"
+            raise SourceError(r.status_code, self.last_status)
+        return r.status_code, r.text
+
     def item_state(self, item_id):
-        """'sold' | 'reserved' | 'online' | 'gone' (supprimée : on ne sait pas si elle a été vendue)."""
-        try:
-            data = self._get(f"/api/v2/items/{item_id}")
-        except SourceError as e:
-            if e.code == 404:
-                return "gone"
-            raise
-        it = data.get("item") or {}
-        if it.get("is_closed") or it.get("is_sold") or str(it.get("item_closing_action") or "").lower() == "sold":
-            return "sold"
-        if it.get("is_reserved"):
-            return "reserved"
-        if it.get("is_hidden") or it.get("is_draft"):
-            return "gone"
+        """
+        État d'une annonce lu sur sa page publique, comme le font les outils de suivi des ventes :
+          - données produit (JSON-LD) « SoldOut » / « OutOfStock »  -> 'sold'
+          - drapeau de réservation dans la page                    -> 'reserved'
+          - « InStock »                                           -> 'online'
+          - 404                                                   -> 'gone' (vendue OU supprimée : on ne sait pas)
+        L'ancienne route /api/v2/items/<id> n'est plus utilisable.
+        """
+        code, text = self.page(f"/items/{item_id}")
+        return parse_item_page(code, text)
+
+
+AVAIL = re.compile(r'"availability"\s*:\s*"(?:https?://schema\.org/)?(\w+)"', re.I)
+RESERVED = re.compile(r'\\?"is_reserved\\?"\s*:\s*true', re.I)
+
+
+def parse_item_page(code, text):
+    if code == 404:
+        return "gone"
+    if code >= 400:
+        return "unknown"
+    m = AVAIL.search(text or "")
+    avail = m.group(1).lower() if m else ""
+    if avail in ("soldout", "outofstock", "discontinued"):
+        return "sold"
+    if RESERVED.search(text or ""):
+        return "reserved"
+    if avail == "instock":
         return "online"
+    return "unknown"
