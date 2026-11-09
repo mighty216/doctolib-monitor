@@ -370,3 +370,68 @@ test('clé dans l\'adresse : fonctionne sans cookie (navigateur intégré), lien
   assert.equal(rows('SELECT key FROM watches WHERE url = ?', URL_B).length, 1);
   assert.equal((await req(`/doctolib?key=mauvaise-cle-mauvaise`)).status, 401);
 });
+
+// ------------------------------------------------------------------ interface sans rechargement
+test('web : action envoyée par la page -> JSON + suivi de la commande jusqu\'au résultat', async () => {
+  await report({ bot: 'tgtg', name: 'TGTG', state: TGTG_STATE });
+  const cookie = await login();
+  let r = await post('/bot/tgtg/action', { action: 'favoris' }, { 'x-hub-fetch': '1' });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.ok, true); assert.match(j.text, /envoyée/);
+  assert.equal(j.cmd.bot, 'tgtg'); assert.ok(Number.isInteger(j.cmd.id));
+  const st = async () => (await req(`/api/cmd?bot=tgtg&id=${j.cmd.id}`, { headers: { cookie } })).json();
+  assert.equal((await st()).status, 'pending');
+  await agent('/api/agent/poll?bot=tgtg&wait=0');
+  assert.equal((await st()).status, 'sent');
+  await report({ bot: 'tgtg', results: [{ id: j.cmd.id, ok: true, html: true, text: '<b>Favoris</b>\nA — 1 dispo\nB — 0 dispo' }] });
+  const done = await st();
+  assert.equal(done.status, 'done');
+  assert.equal(done.result, 'Favoris\nA — 1 dispo\nB — 0 dispo', 'retours à la ligne conservés, HTML retiré');
+  assert.equal((await req(`/api/cmd?bot=tgtg&id=${j.cmd.id}`)).status, 401, 'suivi protégé par la clé');
+  assert.equal((await req('/api/cmd?bot=tgtg&id=999999', { headers: { cookie } })).status, 404);
+  r = await post('/bot/tgtg/action', { action: 'inconnue' }, { 'x-hub-fetch': '1' });
+  assert.equal((await r.json()).ok, false);
+  r = await post('/bot/tgtg/action', { action: 'favoris' });
+  assert.equal(r.status, 303, 'sans script : redirection classique conservée');
+});
+
+test('web : boutons par ligne d\'un tableau (Réserver sur un panier disponible seulement)', async () => {
+  const state = {
+    ...TGTG_STATE,
+    actions: [...TGTG_STATE.actions, { id: 'reserver', label: 'Réserver', hidden: true, args: [{ name: 'item' }, { name: 'qty' }] }],
+    tables: [{
+      title: 'Favoris', columns: ['Panier', 'Dispo', 'Id'], highlight: 1,
+      rows: [['Pain "bio"', '2', 'ID-7'], ['Vide', '0', 'ID-8']],
+      rowActions: [{ action: 'reserver', label: 'Réserver', args: { item: '{2}', qty: '1' }, when: 1, confirm: 'Réserver {0} ?' },
+        { action: 'absente', label: 'X', args: {} }],
+    }],
+  };
+  await report({ bot: 'tgtg', name: 'TGTG', state });
+  const html = await (await req('/bot/tgtg', { headers: { cookie: await login() } })).text();
+  assert.equal((html.match(/name="item" value="ID-7"/g) || []).length, 1);
+  assert.ok(!html.includes('value="ID-8"'), 'pas de bouton sur un panier vide');
+  assert.match(html, /data-confirm="Réserver Pain &quot;bio&quot; \?"/);
+  assert.match(html, /<tr class="hl">/);
+  assert.ok(!/<span class="lbl">Réserver<\/span>/.test(html), 'action cachée absente de la barre d\'actions');
+  assert.match(html, /data-label="Dispo"/, 'libellés de colonnes pour l\'affichage mobile');
+  const r = await post('/bot/tgtg/action', { action: 'reserver', item: 'ID-7', qty: '1' }, { 'x-hub-fetch': '1' });
+  assert.equal((await r.json()).ok, true);
+  const p = await (await agent('/api/agent/poll?bot=tgtg&wait=0')).json();
+  assert.deepEqual(p.commands[0].args, { item: 'ID-7', qty: '1' });
+});
+
+test('le nettoyage de la file se fait au cron, plus à chaque rapport d\'agent', async () => {
+  await report({ bot: 'tgtg', name: 'TGTG', state: TGTG_STATE });
+  env.DB.raw.prepare("INSERT INTO commands (bot, cmd, args, source, status, created_at) VALUES ('tgtg', 'favoris', '{}', 'web', 'pending', ?)").run(Math.floor(Date.now() / 1000) - 3600);
+  await report({ bot: 'tgtg', state: TGTG_STATE });
+  assert.equal(rows("SELECT status FROM commands")[0].status, 'pending');
+  await agentWatchdog(env);
+  assert.equal(rows("SELECT status FROM commands")[0].status, 'expired');
+});
+
+test('CSP : les appels de la page vers le hub sont autorisés, rien d\'autre', async () => {
+  const r = await req('/', { headers: { cookie: await login() } });
+  assert.match(r.headers.get('content-security-policy'), /connect-src 'self'/);
+  assert.match(r.headers.get('content-security-policy'), /default-src 'none'/);
+});

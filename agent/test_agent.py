@@ -112,6 +112,24 @@ class TgtgTests(unittest.TestCase):
         self.assertFalse(self.cmd("nimporte")[1])
         saved = json.load(open(tgtg_hub.CONFIG_FILE)); self.assertEqual(saved["interval"], 20)   # persisté
 
+    def test_scan_command_and_row_buttons(self):
+        self.client.items = [raw("7", "Pain", 2), raw("8", "Vide", 0)]
+        out = self.cmd("scan")
+        self.assertTrue(out[1]); self.assertIn("Scan fait : 2 favori(s), 1 disponible(s)", out[2])
+        self.assertTrue(self.bot.scan_lock.acquire(blocking=False)); self.bot.scan_lock.release()  # verrou relâché
+        fav = self.bot.state()["tables"][0]
+        self.assertEqual(fav["highlight"], 1)
+        self.assertEqual(fav["rowActions"][0]["action"], "reserver")
+        self.assertEqual(fav["rowActions"][0]["args"], {"item": "{4}", "qty": "1"})
+        ids = {a["id"] for a in self.bot.state()["actions"]}
+        self.assertIn("reserver", ids); self.assertIn("annuler", ids)  # les boutons des tableaux renvoient à de vraies actions
+
+    def test_same_start_and_end_hour_refused(self):
+        self.cmd("set", key="hour_start", value="8"); self.cmd("set", key="hour_end", value="20")
+        self.assertFalse(self.cmd("set", key="hour_end", value="8")[1])
+        self.assertFalse(self.cmd("set", key="hour_start", value="20")[1])
+        self.assertEqual((self.bot.settings["hour_start"], self.bot.settings["hour_end"]), (8, 20))
+
     def test_command_error_never_raises(self):
         self.client.create_order = lambda *a: (_ for _ in ()).throw(RuntimeError("x"))
         r = self.cmd("reserver", text="1")

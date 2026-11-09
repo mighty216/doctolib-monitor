@@ -100,7 +100,21 @@ export const retentionStmts = (db, now) => [
 ];
 
 /** Toutes les données nécessaires au tableau de bord, en un seul aller-retour D1. */
-export async function loadDashboardData(db, watchKeys, now) {
+export async function loadDashboardData(db, watchKeys, now, { lite = false } = {}) {
+  if (lite) { // vue d'ensemble (onglets, accueil, Telegram) : état courant seulement, sans statistiques ni frise
+    const res = await db.batch([
+      db.prepare('SELECT key, value FROM meta'),
+      db.prepare('SELECT watch, slot, alerted FROM slots ORDER BY slot LIMIT 400'),
+      ...watchKeys.map((k) => db.prepare('SELECT ts, status, n_slots, http, ms, error FROM checks WHERE watch = ? ORDER BY id DESC LIMIT 1').bind(k)),
+    ]);
+    const meta = {};
+    for (const r of res[0]?.results || []) meta[r.key] = r.value;
+    const slots = {};
+    for (const r of res[1]?.results || []) (slots[r.watch] ||= []).push({ slot: r.slot, alerted: Number(r.alerted) === 1 });
+    const timelines = {};
+    watchKeys.forEach((k, i) => { timelines[k] = res[2 + i]?.results || []; });
+    return { meta, slots, events: [], rate24: {}, rate7: {}, timelines };
+  }
   const stmts = [
     db.prepare('SELECT key, value FROM meta'),
     db.prepare('SELECT watch, slot, alerted FROM slots ORDER BY slot LIMIT 400'),

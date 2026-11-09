@@ -16,15 +16,32 @@ export function sanitizeState(raw) {
     status: STATUSES.includes(s.status) ? s.status : 'idle',
     summary: str(s.summary, 300),
     metrics: arr(s.metrics, 16).map((m) => ({ label: str(m?.label, 40), value: str(m?.value, 80) })),
-    tables: arr(s.tables, 4).map((t) => ({
-      title: str(t?.title, 80),
-      columns: arr(t?.columns, 8).map((c) => str(c, 40)),
-      rows: arr(t?.rows, 40).map((r) => arr(r, 8).map((c) => str(c, 160))),
-    })),
+    tables: arr(s.tables, 4).map((t) => {
+      const columns = arr(t?.columns, 8).map((c) => str(c, 40));
+      const col = (v) => (Number.isInteger(v) && v >= 0 && v < columns.length ? v : null);
+      return {
+        title: str(t?.title, 80),
+        columns,
+        rows: arr(t?.rows, 40).map((r) => arr(r, 8).map((c) => str(c, 160))),
+        highlight: col(t?.highlight),
+        // boutons par ligne : { action, label, args: { nom: "{n° de colonne}" | valeur }, when: n° de colonne, confirm, danger }
+        rowActions: arr(t?.rowActions, 3).map((a) => ({
+          action: str(a?.action, 30).replace(/[^\w-]/g, ''),
+          label: str(a?.label, 30),
+          args: Object.fromEntries(Object.entries(a?.args && typeof a.args === 'object' ? a.args : {}).slice(0, 3)
+            .map(([k, v]) => [str(k, 20).replace(/[^\w-]/g, ''), str(v, 60)]).filter(([k]) => k)),
+          when: col(a?.when),
+          confirm: a?.confirm ? str(a.confirm, 120) : '',
+          danger: !!a?.danger,
+        })).filter((a) => a.action && a.label),
+      };
+    }),
     actions: arr(s.actions, 16).map((a) => ({
       id: str(a?.id, 30).replace(/[^\w-]/g, ''),
       label: str(a?.label, 40),
       confirm: a?.confirm ? str(a.confirm, 120) : '',
+      hidden: !!a?.hidden, // seulement via les boutons des tableaux
+      danger: !!a?.danger,
       args: arr(a?.args, 3).map((x) => ({ name: str(x?.name, 20).replace(/[^\w-]/g, ''), label: str(x?.label, 40), placeholder: str(x?.placeholder, 40) })),
     })).filter((a) => a.id && a.label),
     settings: arr(s.settings, 16).map((x) => ({
@@ -76,6 +93,22 @@ export async function recentCommands(env, bot, limit = 8) {
     'SELECT id, cmd, args, source, status, created_at, done_at, result FROM commands WHERE bot = ? ORDER BY id DESC LIMIT ?',
   ).bind(bot, limit).all();
   return results || [];
+}
+
+/** État d'une commande (suivi en direct depuis l'interface web). */
+export async function getCommand(env, bot, id) {
+  await ensureSchema(env.DB);
+  return env.DB.prepare('SELECT id, cmd, status, created_at, done_at, result FROM commands WHERE bot = ? AND id = ?').bind(bot, id).first();
+}
+
+/** Nettoyage de la file de commandes et du journal : lancé par le cron (et non à chaque rapport d'agent, toutes les 20 s,
+ * où ces requêtes sans index parcouraient toute la table et consommaient l'essentiel du quota de lectures D1). */
+export async function cleanupStmts(db, t = nowSec()) {
+  return [
+    db.prepare('DELETE FROM bot_events WHERE id <= (SELECT COALESCE(MAX(id), 0) FROM bot_events) - 400'),
+    db.prepare("DELETE FROM commands WHERE created_at < ? OR (status IN ('done','error','expired') AND id <= (SELECT COALESCE(MAX(id),0) FROM commands) - 200)").bind(t - 3 * 86400),
+    db.prepare("UPDATE commands SET status = 'expired', done_at = ? WHERE status IN ('pending','sent') AND created_at < ?").bind(t, t - 600),
+  ];
 }
 
 export async function recentBotEvents(env, limit = 60, bot = null) {
@@ -155,10 +188,7 @@ export async function agentReport(env, payload) {
     const level = ['info', 'ok', 'warn', 'bad'].includes(e?.level) ? e.level : 'info';
     stmts.push(db.prepare('INSERT INTO bot_events (ts, bot, level, text) VALUES (?, ?, ?, ?)').bind(t, bot, level, scrub(str(e?.text, 300), secrets)));
   }
-  stmts.push(db.prepare('DELETE FROM bot_events WHERE id <= (SELECT COALESCE(MAX(id), 0) FROM bot_events) - 400'));
-  stmts.push(db.prepare("DELETE FROM commands WHERE created_at < ? OR (status IN ('done','error','expired') AND id <= (SELECT COALESCE(MAX(id),0) FROM commands) - 200)").bind(t - 3 * 86400));
-  stmts.push(db.prepare("UPDATE commands SET status = 'expired', done_at = ? WHERE status IN ('pending','sent') AND created_at < ?").bind(t, t - 600));
-  stmts.push(metaDelStmt(db, `agent_alerted:${bot}`));
+  if (wasDown) stmts.push(metaDelStmt(db, `agent_alerted:${bot}`));
 
   const toSend = [];
   for (const m of (Array.isArray(p.messages) ? p.messages : []).slice(0, 10)) {
@@ -179,7 +209,7 @@ export async function agentReport(env, payload) {
       if (!row) continue;
       const text = scrub(str(r.text, 1500), secrets);
       const plain = r.html ? stripHtml(text) : text;
-      stmts.push(db.prepare('UPDATE commands SET status = ?, done_at = ?, result = ? WHERE id = ?').bind(r.ok === false ? 'error' : 'done', t, plain.replace(/\s*\n\s*/g, ' · ').slice(0, 400), row.id));
+      stmts.push(db.prepare('UPDATE commands SET status = ?, done_at = ?, result = ? WHERE id = ?').bind(r.ok === false ? 'error' : 'done', t, plain.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 1500), row.id));
       if (row.source === 'telegram' && text.trim()) toSend.push({ text: r.ok === false ? `${name} : ${text}` : text, html: !!r.html, markup: sanitizeMarkup(r.markup) });
     }
   }
@@ -220,6 +250,7 @@ export async function agentWatchdog(env) {
   const meta = await getAllMeta(db);
   const now = nowSec();
   const out = [];
+  await db.batch(await cleanupStmts(db, now));
   for (const b of bots) {
     if (b.state && b.state.offlineAlert === false) continue;
     const key = `agent_alerted:${b.id}`;

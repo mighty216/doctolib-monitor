@@ -6,7 +6,7 @@ import { loadWatches, setPaused, removeWatch, renameWatch } from './watches.js';
 import { addAndStart } from './actions.js';
 import { telegramProblems, sendTelegram } from './telegram.js';
 import { clampInt, nowSec, scrub } from './util.js';
-import { agentPoll, agentReport, agentWatchdog, getBot, queueCommand, isOnline } from './hub.js';
+import { agentPoll, agentReport, agentWatchdog, getBot, getCommand, queueCommand, isOnline, BOT_ID_RE } from './hub.js';
 import { doctolibView, hubOverview, isDirect } from './overview.js';
 import { handleTelegramUpdate, setupWebhook, ensureWebhook, webhookPathSecret, webhookHeaderSecret } from './tgbot.js';
 import { buildNav, renderHome, renderBot, renderJournal } from './ui.js';
@@ -18,7 +18,7 @@ const SEC_HEADERS = {
   'referrer-policy': 'no-referrer',
   'x-content-type-options': 'nosniff',
   'content-security-policy':
-    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
 };
 
 function withHeaders(res, extra = {}) {
@@ -158,12 +158,15 @@ async function handleTelegramWebhook(request, env, url, ctx) {
   return new Response('ok');
 }
 
-const back = (path, text, ok = true) => new Response(null, {
-  status: 303, headers: { location: `${path}?f=${encodeURIComponent(String(text).slice(0, 300))}${ok ? '' : '&bad=1'}` },
-});
-
 async function handle(request, env, ctx) {
   const url = new URL(request.url);
+  // Formulaire envoyé par le script de la page (sans rechargement) : réponse JSON au lieu d'une redirection.
+  const wantsJson = request.headers.get('x-hub-fetch') === '1';
+  const back = (path, text, ok = true, extra = {}) => (wantsJson
+    ? Response.json({ ok, text: String(text).slice(0, 300), ...extra })
+    : new Response(null, {
+      status: 303, headers: { location: `${path}?f=${encodeURIComponent(String(text).slice(0, 300))}${ok ? '' : '&bad=1'}` },
+    }));
   if (url.pathname.startsWith('/api/ingest')) return handleIngest(request, env, url);
   if (url.pathname.startsWith('/api/agent/')) return handleAgent(request, env, url);
   if (url.pathname.startsWith('/tg/')) return handleTelegramWebhook(request, env, url, ctx);
@@ -198,16 +201,33 @@ async function handle(request, env, ctx) {
         if (!known || known.value !== url.origin) await metaStmt(env.DB, 'origin', url.origin).run();
       }
     }
-    if (P === '/') return html(await renderHome(env, await buildNav(env), flash));
-    if (P === '/doctolib') return html(renderDashboard(await doctolibView(env), { nav: await buildNav(env), flash }));
+    if (P === '/') {
+      const o = await hubOverview(env);
+      return html(await renderHome(env, await buildNav(env, o), flash, o));
+    }
+    if (P === '/doctolib') {
+      const v = await doctolibView(env);
+      const nav = await buildNav(env);
+      return html(renderDashboard(v, { nav, flash }));
+    }
     if (P === '/journal') {
       const v = await doctolibView(env);
-      return html(await renderJournal(env, await buildNav(env), v.events || []));
+      const nav = await buildNav(env);
+      return html(await renderJournal(env, nav, v.events || []));
     }
     if (P.startsWith('/bot/')) {
       const bot = await getBot(env, decodeURIComponent(P.slice(5)));
+      const nav = await buildNav(env);
       if (!bot) return renderMessage('Bot introuvable', "Cet agent ne s'est encore jamais connecté.", 404);
-      return html(await renderBot(env, await buildNav(env), bot, flash));
+      return html(await renderBot(env, nav, bot, flash));
+    }
+    if (P === '/api/cmd') { // suivi d'une commande envoyée depuis la page
+      const bot = String(url.searchParams.get('bot') || '');
+      const id = Number.parseInt(url.searchParams.get('id') || '', 10);
+      if (!BOT_ID_RE.test(bot) || !Number.isInteger(id)) return Response.json({ ok: false, error: 'paramètres invalides' }, { status: 400 });
+      const c = await getCommand(env, bot, id);
+      if (!c) return Response.json({ ok: false, status: 'expired', error: 'commande introuvable' }, { status: 404 });
+      return Response.json({ ok: true, id: c.id, cmd: c.cmd, status: c.status, result: c.result || '', doneAt: c.done_at || null });
     }
     if (P === '/api/status') return Response.json(await doctolibView(env));
     if (P === '/api/hub') return Response.json(await hubOverview(env));
@@ -248,12 +268,13 @@ async function handle(request, env, ctx) {
       for (const a of act.args) args[a.name] = field(a.name).trim().slice(0, 120);
       if (act.args.some((a) => !args[a.name])) return back(`/bot/${bot.id}`, 'Paramètre manquant.', false);
       const r = await queueCommand(env, bot.id, act.id, args, 'web');
-      return back(`/bot/${bot.id}`, r.ok ? `Commande « ${act.label} » envoyée${isOnline(env, bot) ? '' : ' (le bot est hors ligne : elle sera livrée à son retour)'}.` : r.error, r.ok);
+      return back(`/bot/${bot.id}`, r.ok ? `Commande « ${act.label} » envoyée${isOnline(env, bot) ? '' : ' (le bot est hors ligne : elle sera livrée à son retour)'}.` : r.error, r.ok,
+        r.ok && r.id ? { cmd: { bot: bot.id, id: r.id } } : {});
     }
     const set = (bot.state?.settings || []).find((x) => x.key === field('key'));
     if (!set) return back(`/bot/${bot.id}`, 'Réglage inconnu.', false);
     const r = await queueCommand(env, bot.id, 'set', { key: set.key, value: field('value').trim().slice(0, 120) }, 'web');
-    return back(`/bot/${bot.id}`, r.ok ? `Réglage « ${set.label} » envoyé.` : r.error, r.ok);
+    return back(`/bot/${bot.id}`, r.ok ? `Réglage « ${set.label} » envoyé.` : r.error, r.ok, r.ok && r.id ? { cmd: { bot: bot.id, id: r.id } } : {});
   }
   if (P === '/tg-setup') {
     const r = await setupWebhook(env, url.origin);

@@ -7,7 +7,7 @@ import { clampInt, nowSec, scrub } from './util.js';
 
 export const isDirect = (env) => String(env.MODE || 'ingest').toLowerCase() === 'direct';
 
-export async function doctolibView(env) {
+export async function doctolibView(env, { lite = false } = {}) {
   const now = nowSec();
   const mode = isDirect(env) ? 'direct' : 'ingest';
   const base = {
@@ -21,7 +21,7 @@ export async function doctolibView(env) {
 
   const { all, active, errors } = await loadWatches(env);
   problems.push(...errors);
-  const d = await loadDashboardData(env.DB, all.map((w) => w.key), now);
+  const d = await loadDashboardData(env.DB, all.map((w) => w.key), now, { lite });
   const secrets = [env.TELEGRAM_BOT_TOKEN, env.DASHBOARD_KEY];
   try { problems.push(...JSON.parse(d.meta.seed_errors || '[]')); } catch { /* ignoré */ }
   return {
@@ -79,7 +79,7 @@ export function doctolibSummary(view) {
 /** Tous les bots pour la page d'accueil et /bots. */
 export async function hubOverview(env) {
   const now = nowSec();
-  const dview = await doctolibView(env);
+  const dview = await doctolibView(env, { lite: true });
   const bots = await getBots(env);
   return {
     now,

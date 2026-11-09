@@ -83,7 +83,11 @@ class Bot:
         self.saved_cookie = None  # cookie d'origine du fichier de jetons, essayé une fois sur chaque proxy
         self.tried_saved = set()
         self.orders = []
+        self.force_refresh = False
+        self.last_refresh_try = 0.0
+        self.ok_count, self.last_beat = 0, time.time()  # bilan périodique des scans réussis dans le journal
         self.stop = False
+        self.scan_lock = threading.Lock()  # « Scanner maintenant » et la boucle de scan ne doivent jamais appeler TGTG en même temps
         self.reboot = False
 
     # ------------------------------------------------------------------ journal
@@ -204,9 +208,15 @@ class Bot:
         """Renouvellement du jeton (toutes les 4 h) : l'appel le plus surveillé par DataDome. Il passe en direct depuis le
         serveur ; on remet ensuite proxy ET cookie d'avant (le cookie reçu en direct est lié à l'IP du serveur)."""
         c = self.client
-        last = getattr(c, "last_time_token_refreshed", None)
-        if not hasattr(c, "_refresh_token") or (last and (datetime.now() - last).total_seconds() < getattr(c, "access_token_lifetime", 14400)):
+        if not hasattr(c, "_refresh_token"):
             return
+        # Échéance réelle du jeton (JWT, 48 h chez TGTG) au lieu des 4 h supposées par la lib ; renouvellement si < 6 h
+        # restantes ou après un 401. Jamais plus d'une tentative toutes les 10 min (pas de martèlement si ça échoue).
+        if not self.force_refresh and token_valid_for(c.access_token, 360):
+            return
+        if time.time() - self.last_refresh_try < 600:
+            return
+        self.last_refresh_try, self.force_refresh = time.time(), False
         keep_px, keep_ck = c.proxies, c.cookie
         try:
             c.proxies, c.last_time_token_refreshed = None, None
@@ -217,6 +227,7 @@ class Bot:
         finally:
             c.proxies, c.cookie = keep_px, keep_ck
         self.log("Jeton TGTG renouvelé")
+        self.save_tokens()  # tout de suite : sinon, si le scan qui suit échoue, les nouveaux jetons sont perdus au redémarrage
 
     def rotate_proxy(self):
         p = self.cfg.get("tgtg", {}).get("proxy")
@@ -259,6 +270,10 @@ class Bot:
 
     # ------------------------------------------------------------------ scan
     def scan_once(self):
+        with self.scan_lock:
+            self._scan_once()
+
+    def _scan_once(self):
         self.refresh_if_due()
         raw = self.client.get_items(favorites_only=True)
         found = {}
@@ -276,6 +291,10 @@ class Bot:
             self.hub.message("✅ TGTG : les scans fonctionnent de nouveau.")
             self.log("Scans de nouveau OK", "ok")
         self.fail_count, self.down_alerted = 0, False
+        self.ok_count += 1
+        if time.time() - self.last_beat >= 300:
+            self.log(f"{self.ok_count} scan(s) OK en {int(time.time() - self.last_beat) // 60} min (proxy {self.proxy_index})")
+            self.ok_count, self.last_beat = 0, time.time()
         if self.first_scan:
             self.prev = {k: v["qty"] for k, v in found.items()}
             self.first_scan = False
@@ -326,7 +345,10 @@ class Bot:
                 self.fail_count += 1
                 self.log(f"Scan en erreur ({self.fail_count}) : {str(e)[:150]}", "warn")
                 blocked = "403" in str(e)
-                if self.fail_count >= 10 and self.fail_count % 5 == 0:  # on reste sur le proxy + cookie qui marchent ; changement seulement après un long échec
+                if "401" in str(e)[:6]:
+                    # jeton refusé : un changement de proxy n'y peut rien, on force un renouvellement au prochain scan
+                    self.force_refresh = True
+                elif self.fail_count >= 10 and self.fail_count % 5 == 0:  # on reste sur le proxy + cookie qui marchent ; changement seulement après un long échec
                     self.rotate_proxy()
                 if time.time() - self.last_ok > 600 and not self.down_alerted:
                     self.down_alerted = True
@@ -369,6 +391,13 @@ class Bot:
             lines.append(f"• <b>{esc(name)}</b> — {esc(o.get('state', '?'))}\n  <code>{esc(o.get('id', '?'))}</code>")
         return "\n".join(lines)
 
+    def refresh_orders_quietly(self):
+        """Relit les commandes actives pour que le tableau de la page web soit à jour (sans jamais faire échouer l'action)."""
+        try:
+            self.fetch_orders()
+        except Exception as e:
+            self.log(f"Lecture des commandes impossible : {str(e)[:120]}")
+
     @staticmethod
     def words(args):
         t = str(args.get("text", "") or "").strip()
@@ -381,6 +410,9 @@ class Bot:
         if cmd in ("favoris", "scan"):
             if cmd == "scan":
                 self.scan_once()
+                with self.lock:
+                    n, avail = len(self.items), sum(1 for p in self.items.values() if p["qty"] > 0)
+                return True, f"🔄 Scan fait : {n} favori(s), {avail} disponible(s).\n\n" + self.fav_text(), True
             return True, self.fav_text(), True
         if cmd == "commandes":
             return True, self.orders_text(), True
@@ -390,6 +422,7 @@ class Bot:
                 return False, "Usage : /annuler <numéro de commande>", False
             self.client.abort_order(oid)
             self.log(f"Commande {oid} annulée", "ok")
+            self.refresh_orders_quietly()
             return True, f"❌ Commande <code>{esc(oid)}</code> annulée.", True
         if cmd in ("reserver", "reserve"):
             item = args.get("item") or (w[0] if w else "")
@@ -398,6 +431,8 @@ class Bot:
                 return False, "Usage : /reserver <id du panier> [quantité]", False
             q = min(3, max(1, int(q))) if str(q).isdigit() else 1
             text = self.reserve(item, q)
+            if not text.startswith("❌"):
+                self.refresh_orders_quietly()
             return not text.startswith("❌"), text, True
         if cmd == "horaires":
             m = re.match(r"^(\d{1,2})\s*h?\s*-\s*(\d{1,2})\s*h?$", str(args.get("text", "")).strip().lower())
@@ -438,8 +473,12 @@ class Bot:
         if cmd == "set":
             k, v = str(args.get("key", "")), str(args.get("value", "")).strip()
             try:
-                if k == "hour_start": s[k] = int(v) % 24
-                elif k == "hour_end": s[k] = min(24, max(1, int(v)))
+                if k in ("hour_start", "hour_end"):
+                    h = int(v) % 24 if k == "hour_start" else min(24, max(1, int(v)))
+                    other = s["hour_end" if k == "hour_start" else "hour_start"]
+                    if h % 24 == other % 24:
+                        return False, "Le début et la fin de la plage ne peuvent pas être à la même heure.", False
+                    s[k] = h
                 elif k == "interval": s[k] = max(MIN_INTERVAL, int(v))
                 elif k == "auto_reserve": s[k] = v in ("1", "true", "Oui", "oui")
                 elif k == "auto_quantity": s[k] = min(3, max(1, int(v)))
@@ -498,20 +537,24 @@ class Bot:
                 {"label": "Actif depuis", "value": f"{up // 3600} h {up % 3600 // 60} min"},
             ],
             "tables": [
-                {"title": "Favoris", "columns": ["Panier", "Dispo", "Prix", "Retrait", "Id"],
-                 "rows": [[p["name"], p["qty"], f"{p['price']:.2f} €", p["pickup"], p["id"]] for p in items]},
+                {"title": "Favoris", "columns": ["Panier", "Dispo", "Prix", "Retrait", "Id"], "highlight": 1,
+                 "rows": [[p["name"], p["qty"], f"{p['price']:.2f} €", p["pickup"], p["id"]] for p in items],
+                 "rowActions": [{"action": "reserver", "label": "🛒 Réserver", "args": {"item": "{4}", "qty": "1"}, "when": 1,
+                                 "confirm": "Réserver 1 panier « {0} » ?"}]},
                 {"title": "Commandes actives (dernière lecture)", "columns": ["Panier", "État", "Numéro"],
-                 "rows": [[((o.get("item", {}) or {}).get("name") or o.get("item_name") or "?"), o.get("state", "?"), o.get("id", "?")] for o in self.orders]},
+                 "rows": [[((o.get("item", {}) or {}).get("name") or o.get("item_name") or "?"), o.get("state", "?"), o.get("id", "?")] for o in self.orders],
+                 "rowActions": [{"action": "annuler", "label": "Annuler", "args": {"order": "{2}"}, "danger": True,
+                                 "confirm": "Annuler la commande « {0} » ?"}]},
             ],
             "actions": [
-                {"id": "favoris", "label": "Voir les favoris"},
-                {"id": "commandes", "label": "Mes commandes"},
-                {"id": "scan", "label": "Scanner maintenant"},
-                ({"id": "stop", "label": "⏹ Arrêter les scans", "confirm": "Arrêter les scans TGTG ?"} if s.get("enabled", True)
+                {"id": "favoris", "label": "📋 Voir les favoris"},
+                {"id": "commandes", "label": "📦 Mes commandes"},
+                {"id": "scan", "label": "🔍 Scanner maintenant"},
+                ({"id": "stop", "label": "⏹ Arrêter les scans", "danger": True, "confirm": "Arrêter les scans TGTG ?"} if s.get("enabled", True)
                  else {"id": "resume", "label": "▶ Reprendre les scans"}),
                 {"id": "reserver", "label": "Réserver", "args": [{"name": "item", "label": "Id du panier"}, {"name": "qty", "label": "Quantité (1-3)"}]},
                 {"id": "annuler", "label": "Annuler une commande", "args": [{"name": "order", "label": "Numéro de commande"}]},
-                {"id": "reboot", "label": "Redémarrer le bot", "confirm": "Redémarrer le bot TGTG ?"},
+                {"id": "reboot", "label": "🔄 Redémarrer le bot", "danger": True, "confirm": "Redémarrer le bot TGTG ?"},
             ],
             "settings": [
                 {"key": "hour_start", "label": "Début du scan (heure)", "type": "number", "value": str(s["hour_start"])},
@@ -564,7 +607,10 @@ def main():
         # version d'app si Google Play ne répond pas ; le cookie DataDome est lié au UA -> 403 à chaque redémarrage).
         kw = dict(access_token=access_token, refresh_token=refresh_token, proxies=proxies,
                   cookie=normalize_cookie(datadome_cookie) or "datadome=init",
-                  last_time_token_refreshed=datetime.now() if token_valid_for(access_token) else None)
+                  last_time_token_refreshed=datetime.now(),
+                  # la lib renouvellerait d'elle-même toutes les 4 h (via timedelta.seconds) : avec 86400 elle ne le fait
+                  # jamais, c'est refresh_if_due qui décide selon l'échéance réelle du jeton
+                  access_token_lifetime=86400)
         try:
             c = TgtgClient(user_agent=ua, **kw)
         except TypeError:

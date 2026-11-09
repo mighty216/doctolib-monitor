@@ -8,7 +8,7 @@ export function makeD1() {
     bind: (...a) => mk(sql, a.map((x) => (x === undefined ? null : x))),
     run: async () => {
       const r = db.prepare(sql).run(...args);
-      return { success: true, results: [], meta: { changes: Number(r.changes) } };
+      return { success: true, results: [], meta: { changes: Number(r.changes), last_row_id: Number(r.lastInsertRowid) } };
     },
     all: async () => ({ success: true, results: db.prepare(sql).all(...args).map((r) => ({ ...r })), meta: {} }),
     first: async () => { const r = db.prepare(sql).get(...args); return r ? { ...r } : null; },
