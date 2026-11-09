@@ -155,10 +155,17 @@ UNIT
 }
 if [ "$TGTG" = 1 ]; then unit hub-tgtg "Bot hub - Too Good To Go" "$PY $DIR/tgtg_hub.py"; fi
 unit hub-medinlyon "Bot hub - MédinLyon" "$PY $DIR/medinlyon.py"
+say "Vinted pépites"
+if ! "$PY" -c "import curl_cffi" 2>/dev/null; then
+  "$PY" -m pip install --user --break-system-packages curl_cffi >/dev/null 2>&1 || "$PY" -m pip install --user curl_cffi
+fi
+"$PY" -c "import curl_cffi" 2>/dev/null && ok "curl_cffi présent (empreinte navigateur pour Vinted)" || warn "curl_cffi non installé : Vinted refusera les appels"
+unit hub-vinted "Bot hub - Vinted pépites" "$PY $DIR/vinted_hub.py"
 if [ "$SCRIPTS" = 1 ]; then unit hub-scripts "Bot hub - scripts (ali-coins...)" "$PY $DIR/script_agent.py"; fi
 $SYSTEMCTL daemon-reload
 [ "$TGTG" = 1 ] && $SYSTEMCTL enable hub-tgtg >/dev/null 2>&1 && $SYSTEMCTL restart hub-tgtg && ok "hub-tgtg démarré"
 $SYSTEMCTL enable hub-medinlyon >/dev/null 2>&1 && $SYSTEMCTL restart hub-medinlyon && ok "hub-medinlyon démarré"
+$SYSTEMCTL enable hub-vinted >/dev/null 2>&1 && $SYSTEMCTL restart hub-vinted && ok "hub-vinted démarré"
 [ "$SCRIPTS" = 1 ] && $SYSTEMCTL enable hub-scripts >/dev/null 2>&1 && $SYSTEMCTL restart hub-scripts && ok "hub-scripts démarré"
 
 # --- vérification --------------------------------------------------------------------------------
@@ -171,4 +178,4 @@ else
 fi
 echo
 echo "Terminé. Dans Telegram, envoie /menu : tes bots doivent apparaître dans la minute."
-echo "Journaux : journalctl -u hub-tgtg -f   (ou hub-scripts)"
+echo "Journaux : journalctl -u hub-tgtg -f   (ou hub-scripts, hub-vinted)"

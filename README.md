@@ -8,6 +8,7 @@ Une interface web commune + **un seul bot Telegram** (celui de TGTG) pour tout p
 | Too Good To Go | ton serveur OVH | favoris, commandes, réserver 1-3, annuler, horaires, intervalle, auto-résa, log, reboot |
 | AliExpress coins | ton serveur OVH | état du dernier passage, pièces/série, lancer maintenant, test à blanc |
 | MédinLyon / autres | ton serveur | même mécanique (voir « Ajouter un bot ») |
+| Vinted pépites | ton serveur OVH | dossiers produits, pépites, recherches, suivre/estimer un produit, réglages des seuils |
 
 Telegram : `/menu` (boutons), `/bots`, `/doctolib`, `/ajouter <lien>`, `/pause 2`, `/reprendre 2`, `/supprimer 2`, `/verifier`,
 `/favoris`, `/commandes`, `/annuler <n°>`, `/reserver <id>`, `/horaires 6h-22h`, `/auto`, `/interval 30`, `/log`, `/ok`, `/reboot`, `/coins`, `/coins run`.
@@ -19,6 +20,13 @@ Après `install.bat`, `INFOS.txt` contient une ligne à coller en SSH sur le ser
 TGTG, le proxy et les réglages de l'ancien script, arrête l'ancien service `tgtg` (sans le supprimer), détecte `~/ali-coins`
 et crée les services `hub-tgtg` / `hub-scripts`. Relançable sans risque (mise à jour).
 `tgtg_hub.py` remplace `tgtg_monitor.py` : il n'écoute plus Telegram lui-même (le hub s'en charge).
+
+**Vinted pépites** (`vinted_hub.py`, service `hub-vinted`) : approche lente et précise. Chaque produit identifié (set Lego,
+série + tome, jeu + console) ouvre un dossier ; le bot relève ses annonces toutes les 6 h et les suit jusqu'à leur vente pour
+apprendre le vrai prix de vente et le délai de revente. Aucune alerte tant qu'un dossier n'a pas 5 ventes constatées et
+21 jours de suivi (réglable). Alerte = coût réel (prix + 0,70 € + 5 % + port) contre médiane des ventes, avec boutons
+« Ouvrir », « Acheté », « Faux positif » (2 faux positifs sur un produit = produit ignoré). Telegram : `/produits`, `/suivre lego 42083`,
+`/estimer naruto tome 12`, `/pepites`, `/watch zelda switch haute`. Proxy facultatif : `"vinted": {"proxy": "http://..."}` dans `hub.json`.
 
 **Ajouter un bot** (ex. MédinLyon) : ajoute un bloc dans `~/bot-hub/scripts.json` (`id`, `name`, `cwd`, `run`, `log`, `metrics`) puis
 `sudo systemctl restart hub-scripts`. Un script Python quelconque devient une page web + des commandes Telegram.
