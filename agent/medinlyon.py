@@ -104,6 +104,7 @@ class Bot:
         self.started = time.time()
         self.logbuf = []
         self.wake = threading.Event()
+        self.scan_lock = threading.Lock()  # « Scanner maintenant » et la boucle ne doivent jamais scanner en même temps
 
     # ------------------------------------------------------------------ outils
     def log(self, msg, lvl="info"):
@@ -160,6 +161,10 @@ class Bot:
 
     # ------------------------------------------------------------------ scan
     def scan_once(self):
+        with self.scan_lock:
+            self._scan_once()
+
+    def _scan_once(self):
         self.prune()
         days = self.watched()
         if not days:

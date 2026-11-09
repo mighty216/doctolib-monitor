@@ -293,8 +293,6 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(len(h._pending["messages"]), 1, "le message est conservé pour le prochain envoi")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 FRAG = ('<div class="creneaux"><label><input type="radio" name="creneau" value="1042"> 21:30</label>'
@@ -361,6 +359,10 @@ class MedinTests(unittest.TestCase):
         with self.assertRaises(RuntimeError): self.bot.scan_once()
         self.assertEqual(self.bot.data[iso]["best"], "21:30")
 
+    def test_scan_lock_released(self):
+        self.bot.scan_once()
+        self.assertTrue(self.bot.scan_lock.acquire(blocking=False)); self.bot.scan_lock.release()
+
     def test_commands_state_and_limits(self):
         self.assertFalse(self.cmd("date", date="hier")[1])
         self.assertFalse(self.cmd("date", date="+5")[1])
@@ -375,3 +377,7 @@ class MedinTests(unittest.TestCase):
         self.cmd("set", key="interval", value="1"); self.assertEqual(self.bot.settings["interval"], 5)
         self.cmd("pause"); self.assertFalse(self.bot.settings["enabled"]); self.assertEqual(self.bot.state()["status"], "idle")
         self.assertFalse(self.cmd("nimporte")[1])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -21,7 +21,18 @@ cd "$DIR"
 # --- fichiers de l'agent (intégrés à ce script) -----------------------------------------------
 __FILES__
 
-printf '{\n  "url": "%s",\n  "key": "%s"\n}\n' "$HUB_URL" "$HUB_KEY" > hub.json
+command -v python3 >/dev/null || { echo "python3 est requis."; exit 1; }
+# hub.json : adresse + clé mises à jour, le reste (proxy TGTG...) est conservé
+HUB_URL="$HUB_URL" HUB_KEY="$HUB_KEY" python3 - <<'PYEOF'
+import json, os
+try:
+    cfg = json.load(open("hub.json", encoding="utf8"))
+    if not isinstance(cfg, dict): cfg = {}
+except Exception:
+    cfg = {}
+cfg.update(url=os.environ["HUB_URL"], key=os.environ["HUB_KEY"])
+json.dump(cfg, open("hub.json", "w", encoding="utf8"), indent=2)
+PYEOF
 chmod 600 hub.json
 ok "Fichiers de l'agent écrits"
 

@@ -73,4 +73,11 @@ test('installeur du serveur : reprend jetons + proxy, coupe l\'ancien service, c
   // relancer l'installeur ne casse rien (idempotent)
   const again = spawnSync('bash', [script], { env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, PYTHONPATH: path.join(home, 'pp'), SYSTEMCTL: path.join(bin, 'systemctl'), UNIT_DIR: units, SUDO_CMD: '', BOT_HUB_DIR: d }, encoding: 'utf8', timeout: 30000 });
   assert.equal(again.status, 0, again.stdout + again.stderr);
+  // ancien script supprimé puis réinstallation : le proxy déjà configuré ne doit pas être perdu
+  fs.rmSync(path.join(home, 'tgtg_monitor.py'));
+  const third = spawnSync('bash', [script], { env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, PYTHONPATH: path.join(home, 'pp'), SYSTEMCTL: path.join(bin, 'systemctl'), UNIT_DIR: units, SUDO_CMD: '', BOT_HUB_DIR: d }, encoding: 'utf8', timeout: 30000 });
+  assert.equal(third.status, 0, third.stdout + third.stderr);
+  const cfg3 = JSON.parse(fs.readFileSync(path.join(d, 'hub.json'), 'utf8'));
+  assert.equal(cfg3.tgtg?.proxy?.password, 'pw-secret', 'proxy conservé après réinstallation');
+  assert.equal(cfg3.key, KEY);
 });

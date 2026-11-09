@@ -117,11 +117,11 @@ export function botText(env, bot, now = nowSec()) {
 
 function botMarkup(bot, origin, env) {
   const rows = [];
-  const acts = (bot.state?.actions || []).filter((a) => !a.args.length);
-  for (let i = 0; i < acts.length; i += 2) {
-    rows.push(acts.slice(i, i + 2).map((a) => ({ text: a.label, callback_data: `c:${bot.id}:${a.id}` })));
+  const acts = (bot.state?.actions || []).filter((a) => !a.args.length && !a.hidden);
+  for (let i = 0; i < acts.length; i += 2) { // action à confirmer (redémarrer, arrêter...) : demande d'abord
+    rows.push(acts.slice(i, i + 2).map((a) => ({ text: a.label, callback_data: `${a.confirm ? 'k' : 'c'}:${bot.id}:${a.id}` })));
   }
-  const withArgs = (bot.state?.actions || []).filter((a) => a.args.length);
+  const withArgs = (bot.state?.actions || []).filter((a) => a.args.length && !a.hidden);
   rows.push([{ text: '↩ Menu', callback_data: 'm:main' }, ...(env.DASHBOARD_KEY && origin ? [{ text: '🌐 Web', url: `${origin}/bot/${bot.id}?key=${encodeURIComponent(env.DASHBOARD_KEY)}` }] : [])]);
   return { rows, withArgs };
 }
@@ -138,7 +138,7 @@ const HELP = `Hub de tes bots – commandes
 Général : /menu · /bots · /aide
 Doctolib : /doctolib · /ajouter <lien> · /pause <n> · /reprendre <n> · /supprimer <n> · /verifier
   (ou colle simplement un lien Doctolib)
-Too Good To Go : /tgtg · /favoris · /commandes · /annuler <id> · /reserver <id> · /horaires 6h-22h · /auto [n] · /interval <min> · /log · /ok · /reboot
+Too Good To Go : /tgtg · /favoris · /commandes · /annuler <id> · /reserver <id> · /horaires 6h-22h · /auto [n] · /interval <secondes> · /log · /ok · /reboot
 AliExpress coins : /coins · /coins run
 Autres bots : /<nom> pour voir l'état et les actions.`;
 
@@ -270,6 +270,16 @@ async function onCallback(env, cb, origin) {
     } else if (op === 'dd') { await removeWatch(env, key); await answer('Supprimée'); }
     else return answer();
     return show(await doctolibMenu(env, origin));
+  }
+  if (data.startsWith('k:')) { // confirmation avant une action sensible
+    const [, botId, cmd] = data.split(':');
+    const bot = await getBot(env, botId);
+    const act = (bot?.state?.actions || []).find((a) => a.id === cmd);
+    if (!bot || !act) return answer('Action inconnue');
+    await answer();
+    return editOrSend(env, chat, mid, `${bot.name} : ${act.confirm || `${act.label} ?`}`, {
+      inline_keyboard: [[{ text: `✅ Oui, ${act.label}`.slice(0, 40), callback_data: `c:${bot.id}:${act.id}` }, { text: 'Annuler', callback_data: `m:bot:${bot.id}` }]],
+    });
   }
   if (data.startsWith('c:')) { // action d'un bot : c:<bot>:<cmd>[:<arg>]
     const [, botId, cmd, ...arg] = data.split(':');

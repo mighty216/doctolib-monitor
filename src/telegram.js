@@ -46,7 +46,12 @@ export async function sendTelegram(env, text, o = {}) {
     };
     if (o.html) body.parse_mode = 'HTML';
     if (o.markup) body.reply_markup = o.markup;
-    const r = await tgCall(env, 'sendMessage', body);
+    let r = await tgCall(env, 'sendMessage', body);
+    if (!r.ok && o.html && r.status === 400 && /parse|entit|tag/i.test(r.error || '')) {
+      // HTML refusé (message coupé au milieu d'une balise...) : on l'envoie en texte simple plutôt que de le perdre
+      const plain = String(text).replace(/<[^>]*>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+      r = await tgCall(env, 'sendMessage', { ...body, text: plain.slice(0, 3800), parse_mode: undefined });
+    }
     if (r.ok) return { ok: true, result: r.result };
     last = r.error;
     if ([400, 401, 403, 404].includes(r.status)) return { ok: false, error: last }; // inutile de réessayer

@@ -435,3 +435,29 @@ test('CSP : les appels de la page vers le hub sont autorisés, rien d\'autre', a
   assert.match(r.headers.get('content-security-policy'), /connect-src 'self'/);
   assert.match(r.headers.get('content-security-policy'), /default-src 'none'/);
 });
+
+test('Telegram : une action à confirmer (redémarrer) demande d\'abord confirmation', async () => {
+  await report({ bot: 'tgtg', name: 'TGTG', state: { ...TGTG_STATE, actions: [...TGTG_STATE.actions, { id: 'reboot', label: 'Redémarrer', confirm: 'Redémarrer le bot ?' }] } });
+  await press('m:bot:tgtg');
+  const menu = tg.filter((c) => c.method === 'editMessageText' || c.method === 'sendMessage').pop();
+  const btns = menu.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+  assert.ok(btns.includes('k:tgtg:reboot')); assert.ok(btns.includes('c:tgtg:favoris'));
+  await press('k:tgtg:reboot');
+  assert.equal(rows('SELECT * FROM commands').length, 0, 'rien n\'est envoyé avant la confirmation');
+  assert.match(tg.filter((c) => c.method === 'editMessageText').pop().text, /Redémarrer le bot \?/);
+  await press('c:tgtg:reboot');
+  assert.equal(rows('SELECT cmd FROM commands')[0].cmd, 'reboot');
+});
+
+test('Telegram : un message HTML refusé est renvoyé en texte simple au lieu d\'être perdu', async () => {
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const b = JSON.parse(init.body || '{}'); calls.push(b);
+    if (b.parse_mode === 'HTML') return new Response('{"ok":false,"description":"Bad Request: can\'t parse entities"}', { status: 400 });
+    return new Response('{"ok":true,"result":{}}', { status: 200 });
+  };
+  const { sendTelegram } = await import('../src/telegram.js');
+  const r = await sendTelegram(env, '<b>Panier &amp; co</b> <i>coupé', { html: true, fast: true });
+  assert.equal(r.ok, true);
+  assert.equal(calls.length, 2); assert.equal(calls[1].text, 'Panier & co coupé'); assert.equal(calls[1].parse_mode, undefined);
+});

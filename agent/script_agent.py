@@ -209,20 +209,24 @@ def main():
 
     def serve(b):
         while True:
-            if b.auto_due():
-                ok, text = b.start("--no-delay" if "--no-delay" not in b.spec["run"] else "")
-                b.hub.event("Passage quotidien automatique : " + text, "ok" if ok else "bad")
-            if time.time() - last[b.id] > STATE_EVERY:
-                b.hub.flush(b.state())
-                last[b.id] = time.time()
-            for c in b.hub.poll(wait=15):
-                try:
-                    ok, text, html = b.handle(c)
-                except Exception as e:  # une commande ne doit jamais tuer l'agent
-                    ok, text, html = False, f"Erreur : {str(e)[:200]}", False
-                b.hub.result(c["id"], ok, text, html=html)
-                b.hub.flush(b.state())
-                last[b.id] = time.time()
+            try:  # une erreur imprévue (journal illisible, regex...) ne doit jamais rendre le bot muet
+                if b.auto_due():
+                    ok, text = b.start("--no-delay" if "--no-delay" not in b.spec["run"] else "")
+                    b.hub.event("Passage quotidien automatique : " + text, "ok" if ok else "bad")
+                if time.time() - last[b.id] > STATE_EVERY:
+                    b.hub.flush(b.state())
+                    last[b.id] = time.time()
+                for c in b.hub.poll(wait=15):
+                    try:
+                        ok, text, html = b.handle(c)
+                    except Exception as e:  # une commande ne doit jamais tuer l'agent
+                        ok, text, html = False, f"Erreur : {str(e)[:200]}", False
+                    b.hub.result(c["id"], ok, text, html=html)
+                    b.hub.flush(b.state())
+                    last[b.id] = time.time()
+            except Exception as e:
+                print(f"[{b.id}] erreur inattendue : {e}", flush=True)
+                time.sleep(10)
 
     threads = [threading.Thread(target=serve, args=(b,), daemon=True) for b in bots]
     for t in threads:
