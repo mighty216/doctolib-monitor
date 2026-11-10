@@ -1,3 +1,4 @@
+import os
 import json, os, sys, tempfile, threading, time, unittest, types
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -198,6 +199,23 @@ class TgtgTests(unittest.TestCase):
         self.bot.settings["done_date"] = "2000-01-01"; self.assertTrue(self.bot.in_hours())  # lendemain : repart seul
         self.bot.run_command({"id": 2, "cmd": "fini", "args": {}}); self.bot.run_command({"id": 3, "cmd": "resume", "args": {}})
         self.assertTrue(self.bot.in_hours())
+
+    def test_maj_command_updates_files_and_restarts(self):
+        import tempfile, updater
+        d = tempfile.mkdtemp(); open(os.path.join(d, "tgtg_hub.py"), "w").write("old = 1\n")
+        def fetch(url, timeout=30):
+            if url.endswith("/commits/main"): return b'{"sha": "abcdef1234567"}'
+            if "git/trees" in url: return json.dumps({"tree": [{"type": "blob", "path": "agent/tgtg_hub.py"}, {"type": "blob", "path": "agent/test_x.py"}, {"type": "blob", "path": "agent/vinted_hub.py"}]}).encode()
+            return b"new = 2\n"
+        changed, sha = updater.update_files(fetch=fetch, here=d)
+        self.assertEqual(sorted(changed), ["tgtg_hub.py", "vinted_hub.py"]); self.assertEqual(sha, "abcdef1234567")
+        self.assertEqual(open(os.path.join(d, "tgtg_hub.py")).read(), "new = 2\n")
+        self.assertEqual(open(os.path.join(d, ".bak", "tgtg_hub.py")).read(), "old = 1\n")
+        self.assertFalse(os.path.exists(os.path.join(d, "test_x.py")))
+        self.assertEqual(updater.update_files(fetch=fetch, here=d)[0], [])          # deuxième fois : déjà à jour
+        bad = lambda url, timeout=30: b"def (:" if "raw.github" in url else fetch(url)
+        with self.assertRaises(Exception): updater.update_files(fetch=bad, here=d)  # fichier cassé : rien d'écrasé
+        self.assertEqual(open(os.path.join(d, "tgtg_hub.py")).read(), "new = 2\n")
 
     def test_hours_window(self):
         self.bot.settings.update(hour_start=22, hour_end=6)   # plage qui passe minuit

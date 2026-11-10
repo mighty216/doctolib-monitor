@@ -450,6 +450,17 @@ class Bot:
             s["hour_start"], s["hour_end"] = a, b
             self.save_settings()
             return True, f"⏰ Plage de scan : {a}h → {b}h.", False
+        if cmd in ("maj", "update", "upgrade"):
+            import updater
+            try:
+                changed, sha = updater.update_files()
+            except Exception as e:
+                return False, f"❌ Mise à jour impossible : {str(e)[:200]} (rien n'a été modifié)", False
+            if not changed:
+                return True, f"✅ Déjà à jour (version {sha[:7]}).", False
+            self.log(f"Mise à jour {sha[:7]} : {', '.join(changed)}", "ok")
+            updater.restart_all(self.log)
+            return True, f"✅ Mise à jour {sha[:7]} installée ({len(changed)} fichier(s)). Redémarrage des bots dans quelques secondes.", False
         if cmd in ("fini", "done", "termine"):
             s["done_date"] = f"{now_paris():%Y-%m-%d}"
             self.save_settings()
@@ -569,6 +580,7 @@ class Bot:
                  else {"id": "resume", "label": "▶ Reprendre les scans"}),
                 {"id": "reserver", "label": "Réserver", "args": [{"name": "item", "label": "Id du panier"}, {"name": "qty", "label": "Quantité (1-3)"}]},
                 {"id": "annuler", "label": "Annuler une commande", "args": [{"name": "order", "label": "Numéro de commande"}]},
+                {"id": "maj", "label": "⬆️ Mettre à jour les bots", "confirm": "Télécharger la dernière version et redémarrer tous les bots ?"},
                 {"id": "reboot", "label": "🔄 Redémarrer le bot", "danger": True, "confirm": "Redémarrer le bot TGTG ?"},
             ],
             "settings": [
@@ -579,7 +591,7 @@ class Bot:
                 {"key": "auto_quantity", "label": "Paniers réservés automatiquement", "type": "select", "options": ["1", "2", "3"], "value": str(s["auto_quantity"])},
             ],
             "log": list(self.logbuf)[-40:],
-            "telegram": [],
+            "telegram": [{"cmd": "maj", "text": "mettre à jour tous les bots"}],
         }
 
     # ------------------------------------------------------------------ boucle principale
