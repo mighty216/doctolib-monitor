@@ -190,6 +190,15 @@ class TgtgTests(unittest.TestCase):
         self.assertFalse(json.load(open(tgtg_hub.CONFIG_FILE))["enabled"])            # mémorisé après redémarrage
         self.bot.run_command({"id": 2, "cmd": "resume", "args": {}}); self.assertTrue(self.bot.in_hours())
 
+    def test_done_for_today_then_resumes_tomorrow(self):
+        self.bot.settings.update(hour_start=0, hour_end=24, done_date=""); self.assertTrue(self.bot.in_hours())
+        self.bot.run_command({"id": 1, "cmd": "fini", "args": {}})
+        self.assertFalse(self.bot.in_hours()); self.assertIn("Fini pour aujourd'hui", self.bot.state()["summary"])
+        self.assertTrue(json.load(open(tgtg_hub.CONFIG_FILE))["done_date"])             # mémorisé
+        self.bot.settings["done_date"] = "2000-01-01"; self.assertTrue(self.bot.in_hours())  # lendemain : repart seul
+        self.bot.run_command({"id": 2, "cmd": "fini", "args": {}}); self.bot.run_command({"id": 3, "cmd": "resume", "args": {}})
+        self.assertTrue(self.bot.in_hours())
+
     def test_hours_window(self):
         self.bot.settings.update(hour_start=22, hour_end=6)   # plage qui passe minuit
         h = tgtg_hub.now_paris().hour

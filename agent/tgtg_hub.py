@@ -100,7 +100,7 @@ class Bot:
 
     # ------------------------------------------------------------------ réglages
     def load_settings(self):
-        s = {"enabled": True, "hour_start": 6, "hour_end": 12, "interval": 15, "auto_reserve": True, "auto_quantity": 1}
+        s = {"enabled": True, "hour_start": 6, "hour_end": 12, "interval": 15, "auto_reserve": True, "auto_quantity": 1, "done_date": ""}
         # reprise des réglages de l'ancien script s'ils existent
         old = os.path.join(HERE, "tgtg_config.json")
         for path in (old, CONFIG_FILE):
@@ -114,7 +114,7 @@ class Bot:
                      "interval": ("interval", "scan_interval", "SCAN_INTERVAL"),
                      "auto_reserve": ("auto_reserve", "auto", "AUTO_RESERVE"),
                      "auto_quantity": ("auto_quantity", "auto_qty", "AUTO_QUANTITY", "quantity"),
-                     "enabled": ("enabled",)}
+                     "enabled": ("enabled",), "done_date": ("done_date",)}
             for k, names in alias.items():
                 for n in names:
                     if n in raw:
@@ -125,6 +125,7 @@ class Bot:
         s["hour_end"] = 24 if he % 24 == 0 else he % 24
         s["interval"] = max(MIN_INTERVAL, int(s["interval"]))
         s["enabled"] = bool(s["enabled"])
+        s["done_date"] = str(s["done_date"] or "")
         s["auto_reserve"] = bool(s["auto_reserve"])
         s["auto_quantity"] = min(3, max(1, int(s["auto_quantity"])))
         return s
@@ -133,8 +134,13 @@ class Bot:
         with open(CONFIG_FILE, "w", encoding="utf8") as f:
             json.dump(self.settings, f, indent=2)
 
+    def done_today(self):
+        return self.settings.get("done_date") == f"{now_paris():%Y-%m-%d}"
+
     def in_hours(self):
         if not self.settings.get("enabled", True):  # bouton « Arrêter » : aucun scan, quelle que soit l'heure
+            return False
+        if self.done_today():  # « fini pour aujourd'hui » : reprise automatique le lendemain
             return False
         h, a, b = now_paris().hour, self.settings["hour_start"], self.settings["hour_end"]
         return a <= h < b if a < b else (h >= a or h < b)
@@ -444,6 +450,11 @@ class Bot:
             s["hour_start"], s["hour_end"] = a, b
             self.save_settings()
             return True, f"⏰ Plage de scan : {a}h → {b}h.", False
+        if cmd in ("fini", "done", "termine"):
+            s["done_date"] = f"{now_paris():%Y-%m-%d}"
+            self.save_settings()
+            self.log("Fini pour aujourd'hui : scans suspendus jusqu'à demain", "ok")
+            return True, f"✅ C'est noté, plus de scan aujourd'hui. Reprise demain à {s['hour_start']}h.", False
         if cmd in ("stop", "pause", "arreter"):
             s["enabled"] = False
             self.save_settings()
@@ -451,6 +462,7 @@ class Bot:
             return True, "⏹ Scans TGTG arrêtés. Reprends avec le bouton « Reprendre » ou /tgtg resume.", False
         if cmd in ("resume", "reprendre", "start"):
             s["enabled"] = True
+            s["done_date"] = ""
             self.fail_count = 0
             self.last_ok = time.time()
             self.save_settings()
@@ -520,6 +532,8 @@ class Bot:
             status, summary = "bad", f"Scans en échec ({self.fail_count} d'affilée)"
         elif not s.get("enabled", True):
             status, summary = "idle", "Arrêté (bouton Reprendre pour relancer)"
+        elif self.done_today():
+            status, summary = "ok", f"Fini pour aujourd'hui, reprise demain à {s['hour_start']}h"
         elif not self.in_hours():
             status, summary = "ok", f"En veille (plage {s['hour_start']}h–{s['hour_end']}h)"
         elif not self.last_scan:
@@ -550,6 +564,7 @@ class Bot:
                 {"id": "favoris", "label": "📋 Voir les favoris"},
                 {"id": "commandes", "label": "📦 Mes commandes"},
                 {"id": "scan", "label": "🔍 Scanner maintenant"},
+                {"id": "fini", "label": "✅ Panier pris, fini pour aujourd'hui", "confirm": "Arrêter les scans jusqu'à demain ?"},
                 ({"id": "stop", "label": "⏹ Arrêter les scans", "danger": True, "confirm": "Arrêter les scans TGTG ?"} if s.get("enabled", True)
                  else {"id": "resume", "label": "▶ Reprendre les scans"}),
                 {"id": "reserver", "label": "Réserver", "args": [{"name": "item", "label": "Id du panier"}, {"name": "qty", "label": "Quantité (1-3)"}]},
