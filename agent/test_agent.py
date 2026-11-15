@@ -228,8 +228,9 @@ class TgtgTests(unittest.TestCase):
         self.assertTrue(self.cmd("jours", text="lun-ven")[1]); self.assertEqual(self.bot.settings["days"], [0, 1, 2, 3, 4])
         self.assertTrue(self.cmd("jours", text="ven-lun")[1]); self.assertEqual(self.bot.settings["days"], [0, 4, 5, 6])
         self.assertFalse(self.cmd("jours", text="blabla")[1])
-        self.bot.run_command({"id": 9, "cmd": "set", "args": {"key": f"day_{today}", "value": "1"}}); self.assertIn(today, self.bot.settings["days"])
-        self.assertEqual(sum(1 for x in self.bot.state()["settings"] if x["key"].startswith("day_")), 7)
+        self.bot.run_command({"id": 9, "cmd": "set", "args": {"key": "week", "value": "0000011"}}); self.assertEqual(self.bot.settings["days"], [5, 6])
+        wk = [x for x in self.bot.state()["settings"] if x["key"] == "week"][0]; self.assertEqual((wk["type"], wk["value"]), ("week", "0000011"))
+        self.bot.run_command({"id": 10, "cmd": "set", "args": {"key": "week", "value": "0000000"}}); self.assertEqual(self.bot.settings["days"], [5, 6])
         self.assertEqual(json.load(open(tgtg_hub.CONFIG_FILE))["days"], self.bot.settings["days"])
         self.cmd("jours", text="tous")
 

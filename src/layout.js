@@ -127,6 +127,7 @@ details.fold>summary::after{content:"▸";color:var(--mut);margin-top:20px;trans
 details.fold[open]>summary::after{transform:rotate(90deg)}
 .set{display:grid;grid-template-columns:minmax(140px,1fr) minmax(120px,170px) auto;gap:8px 12px;align-items:center;padding:10px 0;border-top:1px solid var(--bd)}
 .set:first-child{border-top:0;padding-top:0}.set:last-child{padding-bottom:0}
+.weekset .week{grid-column:1/-1;display:grid;grid-template-columns:repeat(7,1fr);gap:6px}.weekset .day{padding:10px 0;min-height:44px;font-weight:600;border-radius:10px;background:var(--s2);color:var(--mut)}.weekset .day.on{background:linear-gradient(135deg,var(--acc),var(--acc2));border-color:transparent;color:#fff}
 .set label{font-weight:600;font-size:14px}.set label .muted{font-weight:400;display:block}
 .empty{padding:22px;text-align:center;color:var(--mut);font-size:14px}
 .chip{display:inline-block;font-size:11.5px;font-weight:700;padding:1px 8px;border-radius:999px;background:color-mix(in srgb,var(--idle) 18%,transparent);color:var(--mut);white-space:nowrap}
@@ -222,6 +223,11 @@ const SCRIPT = `
       if(j.status==="sent")t.querySelector("div").textContent=label+" : le bot traite la commande…";
       setTimeout(tick,Date.now()-t0<10000?800:2000);
     }).catch(function(){setTimeout(tick,3000)});})();}
+  // ---- sélecteur des jours de la semaine
+  document.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("button.day");if(!b)return;
+    var f=b.closest("form"),v=f.querySelector("input[name=value]");b.classList.toggle("on");b.setAttribute("aria-pressed",b.classList.contains("on"));
+    v.value=[].map.call(f.querySelectorAll("button.day"),function(x){return x.classList.contains("on")?"1":"0"}).join("");
+    f.requestSubmit(f.querySelector(".wkgo"));});
   // ---- envoi des formulaires sans rechargement
   document.addEventListener("submit",function(e){var f=e.target;if(!f.matches||!f.matches("form[method=post]")||f.dataset.plain!==undefined)return;
     e.preventDefault();if(f.dataset.confirm&&!confirm(f.dataset.confirm))return;

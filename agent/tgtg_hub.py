@@ -531,6 +531,13 @@ class Bot:
                     if h % 24 == other % 24:
                         return False, "Le début et la fin de la plage ne peuvent pas être à la même heure.", False
                     s[k] = h
+                elif k == "week":
+                    bits = (v + "1111111")[:7]
+                    days = [i for i, ch in enumerate(bits) if ch == "1"]
+                    if not days:
+                        return False, "Garde au moins un jour actif (ou utilise « Arrêter les scans »).", False
+                    s["days"] = days; self.save_settings()
+                    return True, "Jours surveillés : " + ", ".join(DAY_NAMES[d] for d in days) + ".", False
                 elif k.startswith("day_") and k[4:].isdigit() and int(k[4:]) <= 6:
                     d, on = int(k[4:]), v in ("1", "true", "Oui", "oui")
                     days = set(s["days"]); (days.add(d) if on else days.discard(d))
@@ -625,7 +632,7 @@ class Bot:
                 {"key": "hour_start", "label": "Début du scan (heure)", "type": "number", "value": str(s["hour_start"])},
                 {"key": "hour_end", "label": "Fin du scan (heure)", "type": "number", "value": str(s["hour_end"])},
                 {"key": "interval", "label": "Intervalle entre scans (s)", "type": "number", "value": str(s["interval"]), "help": f"Minimum {MIN_INTERVAL} s : en dessous, risque de blocage."},
-                *[{"key": f"day_{d}", "label": f"Scanner le {DAY_NAMES[d].lower()}", "type": "bool", "value": "1" if d in s["days"] else "0"} for d in range(7)],
+                {"key": "week", "label": "Jours de scan", "type": "week", "value": "".join("1" if d in s["days"] else "0" for d in range(7)), "help": "Touche un jour pour l'activer ou le couper."},
                 {"key": "auto_reserve", "label": "Réservation automatique", "type": "bool", "value": "1" if s["auto_reserve"] else "0"},
                 {"key": "auto_quantity", "label": "Paniers réservés automatiquement", "type": "select", "options": ["1", "2", "3"], "value": str(s["auto_quantity"])},
             ],

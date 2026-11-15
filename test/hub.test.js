@@ -194,6 +194,15 @@ const TGTG_STATE = {
   log: ['ligne 1'],
 };
 
+test('agent : réglage « week » rendu en 7 boutons Lun..Dim, jours actifs marqués', async () => {
+  await report({ bot: 'tgtg', name: 'Too Good To Go', state: { ...TGTG_STATE, settings: [{ key: 'week', label: 'Jours de scan', type: 'week', value: '1111100' }] } });
+  const page = await (await req('/bot/tgtg', { headers: { cookie: await login() } })).text();
+  assert.equal((page.match(/class="day on"/g) || []).length, 5);
+  assert.equal((page.match(/class="day"/g) || []).length, 2);
+  assert.match(page, /name="value" value="1111100"/); assert.match(page, />Dim</);
+  assert.match(page, /button\.day/);   // script de bascule présent
+});
+
 test('agent : authentification obligatoire', async () => {
   assert.equal((await req('/api/agent/poll?bot=tgtg')).status, 401);
   assert.equal((await req('/api/agent/poll?bot=tgtg', { headers: { authorization: 'Bearer faux' } })).status, 401);

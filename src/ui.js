@@ -73,7 +73,18 @@ ${hidden('action', a.id)}<button type="submit"${a.danger ? ' class="danger"' : '
 <span class="lbl">${esc(a.label)}</span>${hidden('action', a.id)}${fields}<button type="submit" data-label="${esc(a.label)}">Envoyer</button></form>`;
 }
 
+const WEEK = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+
+/** Sélecteur des jours de la semaine : 7 boutons, valeur = 7 chiffres (1 = actif), envoyée à chaque clic. */
+function weekRow(b, s) {
+  const bits = String(s.value || '').padEnd(7, '1').slice(0, 7);
+  return `<form class="set weekset" method="post" action="/bot/${esc(b.id)}/set"><label>${esc(s.label)}${s.help ? `<span class="muted">${esc(s.help)}</span>` : ''}</label>
+${hidden('key', s.key)}<button type="submit" class="wkgo" data-label="${esc(s.label)}" hidden>ok</button><input type="hidden" name="value" value="${esc(bits)}">
+<div class="week" role="group" aria-label="${esc(s.label)}">${WEEK.map((n, i) => `<button type="button" class="day${bits[i] === '1' ? ' on' : ''}" data-i="${i}" aria-pressed="${bits[i] === '1'}">${n}</button>`).join('')}</div></form>`;
+}
+
 function settingRow(b, s) {
+  if (s.type === 'week') return weekRow(b, s);
   let input;
   const id = `s-${b.id}-${s.key}`;
   if (s.type === 'bool') input = `<select id="${esc(id)}" name="value"><option value="1"${s.value === '1' || s.value === 'true' ? ' selected' : ''}>Oui</option><option value="0"${s.value === '0' || s.value === 'false' ? ' selected' : ''}>Non</option></select>`;

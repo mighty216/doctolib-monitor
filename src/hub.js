@@ -47,7 +47,7 @@ export function sanitizeState(raw) {
     settings: arr(s.settings, 16).map((x) => ({
       key: str(x?.key, 30).replace(/[^\w-]/g, ''),
       label: str(x?.label, 60),
-      type: ['text', 'number', 'bool', 'select'].includes(x?.type) ? x.type : 'text',
+      type: ['text', 'number', 'bool', 'select', 'week'].includes(x?.type) ? x.type : 'text',
       value: str(x?.value, 120),
       options: arr(x?.options, 12).map((o) => str(o, 40)),
       help: str(x?.help, 160),
