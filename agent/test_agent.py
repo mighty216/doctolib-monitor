@@ -217,6 +217,22 @@ class TgtgTests(unittest.TestCase):
         with self.assertRaises(Exception): updater.update_files(fetch=bad, here=d)  # fichier cassé : rien d'écrasé
         self.assertEqual(open(os.path.join(d, "tgtg_hub.py")).read(), "new = 2\n")
 
+    def test_weekdays_selection(self):
+        self.bot.settings.update(hour_start=0, hour_end=24, done_date="", enabled=True)
+        today = tgtg_hub.now_paris().weekday()
+        self.assertTrue(self.cmd("jours", text="tous")[1]); self.assertTrue(self.bot.in_hours())
+        names = ["lun", "mar", "mer", "jeu", "ven", "sam", "dim"]
+        other = names[(today + 1) % 7]
+        self.assertTrue(self.cmd("jours", text=other)[1]); self.assertEqual(self.bot.settings["days"], [(today + 1) % 7])
+        self.assertFalse(self.bot.in_hours()); self.assertIn("jour non surveillé", self.bot.state()["summary"])
+        self.assertTrue(self.cmd("jours", text="lun-ven")[1]); self.assertEqual(self.bot.settings["days"], [0, 1, 2, 3, 4])
+        self.assertTrue(self.cmd("jours", text="ven-lun")[1]); self.assertEqual(self.bot.settings["days"], [0, 4, 5, 6])
+        self.assertFalse(self.cmd("jours", text="blabla")[1])
+        self.bot.run_command({"id": 9, "cmd": "set", "args": {"key": f"day_{today}", "value": "1"}}); self.assertIn(today, self.bot.settings["days"])
+        self.assertEqual(sum(1 for x in self.bot.state()["settings"] if x["key"].startswith("day_")), 7)
+        self.assertEqual(json.load(open(tgtg_hub.CONFIG_FILE))["days"], self.bot.settings["days"])
+        self.cmd("jours", text="tous")
+
     def test_hours_window(self):
         self.bot.settings.update(hour_start=22, hour_end=6)   # plage qui passe minuit
         h = tgtg_hub.now_paris().hour

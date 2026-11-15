@@ -55,6 +55,10 @@ def token_valid_for(access_token, minutes=30):
         return False
 
 
+DAY_NAMES = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+DAY_KEYS = {"lun": 0, "mar": 1, "mer": 2, "jeu": 3, "ven": 4, "sam": 5, "dim": 6}
+
+
 def now_paris():
     return datetime.now(PARIS)
 
@@ -100,7 +104,7 @@ class Bot:
 
     # ------------------------------------------------------------------ réglages
     def load_settings(self):
-        s = {"enabled": True, "hour_start": 6, "hour_end": 12, "interval": 15, "auto_reserve": True, "auto_quantity": 1, "done_date": ""}
+        s = {"enabled": True, "hour_start": 6, "hour_end": 12, "interval": 15, "auto_reserve": True, "auto_quantity": 1, "done_date": "", "days": list(range(7))}
         # reprise des réglages de l'ancien script s'ils existent
         old = os.path.join(HERE, "tgtg_config.json")
         for path in (old, CONFIG_FILE):
@@ -114,7 +118,7 @@ class Bot:
                      "interval": ("interval", "scan_interval", "SCAN_INTERVAL"),
                      "auto_reserve": ("auto_reserve", "auto", "AUTO_RESERVE"),
                      "auto_quantity": ("auto_quantity", "auto_qty", "AUTO_QUANTITY", "quantity"),
-                     "enabled": ("enabled",), "done_date": ("done_date",)}
+                     "enabled": ("enabled",), "done_date": ("done_date",), "days": ("days",)}
             for k, names in alias.items():
                 for n in names:
                     if n in raw:
@@ -126,6 +130,10 @@ class Bot:
         s["interval"] = max(MIN_INTERVAL, int(s["interval"]))
         s["enabled"] = bool(s["enabled"])
         s["done_date"] = str(s["done_date"] or "")
+        try:
+            s["days"] = sorted({int(d) for d in s["days"] if 0 <= int(d) <= 6}) or list(range(7))
+        except (TypeError, ValueError):
+            s["days"] = list(range(7))
         s["auto_reserve"] = bool(s["auto_reserve"])
         s["auto_quantity"] = min(3, max(1, int(s["auto_quantity"])))
         return s
@@ -139,6 +147,8 @@ class Bot:
 
     def in_hours(self):
         if not self.settings.get("enabled", True):  # bouton « Arrêter » : aucun scan, quelle que soit l'heure
+            return False
+        if now_paris().weekday() not in self.settings.get("days", range(7)):  # jour de la semaine non surveillé
             return False
         if self.done_today():  # « fini pour aujourd'hui » : reprise automatique le lendemain
             return False
@@ -485,6 +495,25 @@ class Bot:
             s["interval"] = max(MIN_INTERVAL, int(w[0]))
             self.save_settings()
             return True, f"⏱ Intervalle : {s['interval']} s" + (f" (minimum {MIN_INTERVAL})" if int(w[0]) < MIN_INTERVAL else "") + ".", False
+        if cmd in ("jours", "days"):
+            txt = " ".join(w).lower().replace("à", "-").replace("a ", "-")
+            if txt in ("tous", "tout", "all", "7j"):
+                new = list(range(7))
+            else:
+                new = set()
+                for a, b in re.findall(r"([a-z]{3})[a-z]*\s*-\s*([a-z]{3})[a-z]*", txt):
+                    if a in DAY_KEYS and b in DAY_KEYS:
+                        i, j = DAY_KEYS[a], DAY_KEYS[b]
+                        new |= set(range(i, j + 1)) if i <= j else set(range(i, 7)) | set(range(0, j + 1))
+                txt2 = re.sub(r"([a-z]{3})[a-z]*\s*-\s*([a-z]{3})[a-z]*", " ", txt)
+                new |= {DAY_KEYS[t[:3]] for t in re.findall(r"[a-z]{3,}", txt2) if t[:3] in DAY_KEYS}
+                new = sorted(new)
+            if not new:
+                cur = " ".join(DAY_NAMES[d][:3].lower() for d in s["days"])
+                return False, f"Usage : /jours lun-ven  ou  /jours mar jeu sam  ou  /jours tous (actuellement : {cur}).", False
+            s["days"] = new
+            self.save_settings()
+            return True, "📅 Jours surveillés : " + ", ".join(DAY_NAMES[d] for d in new) + ".", False
         if cmd == "auto":
             if w and w[0].isdigit():
                 s["auto_quantity"] = min(3, max(1, int(w[0])))
@@ -502,6 +531,13 @@ class Bot:
                     if h % 24 == other % 24:
                         return False, "Le début et la fin de la plage ne peuvent pas être à la même heure.", False
                     s[k] = h
+                elif k.startswith("day_") and k[4:].isdigit() and int(k[4:]) <= 6:
+                    d, on = int(k[4:]), v in ("1", "true", "Oui", "oui")
+                    days = set(s["days"]); (days.add(d) if on else days.discard(d))
+                    if not days:
+                        return False, "Garde au moins un jour actif (ou utilise « Arrêter les scans »).", False
+                    s["days"] = sorted(days); self.save_settings()
+                    return True, f"{DAY_NAMES[d]} : {'surveillé' if on else 'non surveillé'}.", False
                 elif k == "interval": s[k] = max(MIN_INTERVAL, int(v))
                 elif k == "auto_reserve": s[k] = v in ("1", "true", "Oui", "oui")
                 elif k == "auto_quantity": s[k] = min(3, max(1, int(v)))
@@ -545,6 +581,8 @@ class Bot:
             status, summary = "idle", "Arrêté (bouton Reprendre pour relancer)"
         elif self.done_today():
             status, summary = "ok", f"Fini pour aujourd'hui, reprise demain à {s['hour_start']}h"
+        elif now_paris().weekday() not in s["days"]:
+            status, summary = "ok", "En veille (jour non surveillé)"
         elif not self.in_hours():
             status, summary = "ok", f"En veille (plage {s['hour_start']}h–{s['hour_end']}h)"
         elif not self.last_scan:
@@ -587,11 +625,12 @@ class Bot:
                 {"key": "hour_start", "label": "Début du scan (heure)", "type": "number", "value": str(s["hour_start"])},
                 {"key": "hour_end", "label": "Fin du scan (heure)", "type": "number", "value": str(s["hour_end"])},
                 {"key": "interval", "label": "Intervalle entre scans (s)", "type": "number", "value": str(s["interval"]), "help": f"Minimum {MIN_INTERVAL} s : en dessous, risque de blocage."},
+                *[{"key": f"day_{d}", "label": f"Scanner le {DAY_NAMES[d].lower()}", "type": "bool", "value": "1" if d in s["days"] else "0"} for d in range(7)],
                 {"key": "auto_reserve", "label": "Réservation automatique", "type": "bool", "value": "1" if s["auto_reserve"] else "0"},
                 {"key": "auto_quantity", "label": "Paniers réservés automatiquement", "type": "select", "options": ["1", "2", "3"], "value": str(s["auto_quantity"])},
             ],
             "log": list(self.logbuf)[-40:],
-            "telegram": [{"cmd": "maj", "text": "mettre à jour tous les bots"}],
+            "telegram": [{"cmd": "maj", "text": "mettre à jour tous les bots"}, {"cmd": "jours", "text": "jours de scan (ex : /jours lun-ven)"}],
         }
 
     # ------------------------------------------------------------------ boucle principale
