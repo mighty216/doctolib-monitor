@@ -151,12 +151,13 @@ const LOCAL_RING_JS = `(function(){
   new MutationObserver(sync).observe(document.querySelector("main"),{childList:true});sync();
 })();`;
 
+// Option repliée en bas de page : le bip local (ci-dessus) reste le seul bloc visible en haut.
 function airpodsInstallHtml() {
-  return `<section><h3>💻 Brancher le PC Windows</h3><div class="card">
+  return `<details class="fold" id="fold-pc"><summary><h3>💻 Option : sonner via le PC Windows</h3></summary><div class="card">
 <p style="margin:0 0 8px">Pour faire sonner les AirPods via le PC depuis n'importe où (web ou Telegram <code>/sonner</code>) : sur le PC où ils sont associés,
 ouvre <b>PowerShell</b> et colle cette ligne, avec la clé de l'agent (celle de la ligne <code>curl</code> dans <code>INFOS.txt</code>) :</p>
 <pre class="log" style="white-space:pre-wrap;word-break:break-all">irm -Headers @{Authorization="Bearer CLE_AGENT"} <span data-origin>https://TON-HUB</span>/agent/install-airpods.ps1 | iex</pre>
-<p class="muted" style="margin:8px 0 0">Installe Python si besoin, l'agent en arrière-plan et son démarrage avec Windows. Relançable pour mettre à jour.</p></div></section>`;
+<p class="muted" style="margin:8px 0 0">Installe Python si besoin, l'agent en arrière-plan et son démarrage avec Windows. Relançable pour mettre à jour.</p></div></details>`;
 }
 
 export async function renderBot(env, nav, bot, flash) {
@@ -189,12 +190,13 @@ ${online ? '' : '<p class="muted">Le bot est hors ligne : les commandes lui sero
 <span class="global ${status === 'idle' ? '' : esc(status)}">${esc(online ? (st?.summary || 'En attente du premier rapport') : offlineTxt)}</span>
 <span class="muted">Dernier signe de l'agent : ${timeTag(bot.lastSeen)}${online ? '' : offlineHint}</span></div></div></div>
 ${metricsHtml(st?.metrics)}
-${isAirpods ? `<div class="grid2">${LOCAL_RING_HTML}${bot.placeholder || !online ? airpodsInstallHtml() : ''}</div>` : ''}
+${isAirpods ? LOCAL_RING_HTML : ''}
 ${actionsBlock || settingsBlock ? `<div class="grid2">${actionsBlock}${settingsBlock}</div>` : ''}
 ${tables}
 ${cmds.length ? `<h3>Dernières commandes</h3>${tableHtml(['Quand', 'Commande', 'État', 'Résultat'], cmdRows, { cellClass: ['nw'] })}` : ''}
 ${st?.log?.length ? `<details class="fold" id="fold-log" open><summary><h3>Journal du bot</h3></summary><pre class="log">${esc(st.log.join('\n'))}</pre></details>` : ''}
-${events.length ? `<details class="fold" id="fold-ev"><summary><h3>Évènements (${events.length})</h3></summary>${tableHtml(['Quand', 'Évènement'], eventRows(events, false), { rowClass: (i) => `lv-${events[i].level}`, cellClass: ['nw'] })}</details>` : ''}`;
+${events.length ? `<details class="fold" id="fold-ev"><summary><h3>Évènements (${events.length})</h3></summary>${tableHtml(['Quand', 'Évènement'], eventRows(events, false), { rowClass: (i) => `lv-${events[i].level}`, cellClass: ['nw'] })}</details>` : ''}
+${isAirpods ? airpodsInstallHtml() : ''}`;
   const script = isAirpods ? LOCAL_RING_JS : '';
   return shell({ title: bot.name, nav, active: `/bot/${bot.id}`, body, refresh: 20, script });
 }

@@ -472,7 +472,7 @@ test('Telegram : un message HTML refusé est renvoyé en texte simple au lieu d\
 });
 
 // ------------------------------------------------------------------ AirPods
-test('AirPods : page servie sans agent (sonnerie locale + ligne d\'installation PowerShell), onglet présent', async () => {
+test('AirPods : page servie sans agent (sonnerie locale en haut, installation PC repliée en bas), onglet présent', async () => {
   const cookie = await login();
   const home = await (await req('/', { headers: { cookie } })).text();
   assert.match(home, /href="\/bot\/airpods"/);
@@ -482,6 +482,12 @@ test('AirPods : page servie sans agent (sonnerie locale + ligne d\'installation 
   assert.match(html, /data-local-ring/);
   assert.match(html, /install-airpods\.ps1/);
   assert.match(html, /Agent PC pas encore installé/);
+  const pc = html.indexOf('<details class="fold" id="fold-pc">');
+  assert.ok(pc > 0, 'installation PC dans un <details>');
+  assert.ok(pc > html.indexOf('data-local-ring'), 'repliée sous « Sonner sur cet appareil »');
+  assert.ok(html.indexOf('install-airpods.ps1') > pc, 'la ligne PowerShell est dans le bloc replié');
+  assert.match(html, /<summary><h3>💻 Option : sonner via le PC Windows<\/h3><\/summary>/);
+  assert.doesNotMatch(html, /Brancher le PC Windows/);
   assert.match(html, /AudioContext/);
   assert.ok(!html.includes(AGENT), 'la clé de l\'agent n\'est jamais affichée');
   assert.equal((await req('/bot/autre', { headers: { cookie } })).status, 404);
