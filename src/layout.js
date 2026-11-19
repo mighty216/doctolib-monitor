@@ -252,7 +252,7 @@ const SCRIPT = `
  * nav = [{ href, label, status? }], active = href de l'onglet courant.
  * refresh = intervalle du rafraîchissement en direct (secondes).
  */
-export function shell({ title, nav = [], active = '', body, refresh = 60 }) {
+export function shell({ title, nav = [], active = '', body, refresh = 60, script = '' }) {
   const links = nav.map((n) => `<a href="${esc(n.href)}" class="${n.href === active ? 'on' : ''}">${n.status ? `<i class="dot ${esc(n.status)}"></i>` : ''}${esc(n.label)}</a>`).join('');
   return `<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -263,7 +263,7 @@ export function shell({ title, nav = [], active = '', body, refresh = 60 }) {
 <main>${body}</main>
 <div id="toasts" role="status" aria-live="polite"></div>
 <dialog id="sheet"><div class="hd"><h2>Résultat</h2><span class="pill">Fait</span><button class="sm ghost" type="button" data-close aria-label="Fermer">✕</button></div><div class="bd"></div></dialog>
-<script>${SCRIPT}</script></body></html>`;
+<script>${SCRIPT}</script>${script ? `<script>${script}</script>` : ''}</body></html>`;
 }
 
 /** Tableau qui devient une liste de cartes sur mobile. cols = noms, rows = [[html déjà échappé]], opts.rowClass(i) */

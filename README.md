@@ -9,9 +9,10 @@ Une interface web commune + **un seul bot Telegram** (celui de TGTG) pour tout p
 | AliExpress coins | ton serveur OVH | état du dernier passage, pièces/série, lancer maintenant, test à blanc |
 | MédinLyon / autres | ton serveur | même mécanique (voir « Ajouter un bot ») |
 | Vinted pépites | ton serveur OVH | dossiers produits, pépites, recherches, suivre/estimer un produit, réglages des seuils |
+| AirPods | ton PC Windows (+ le navigateur du téléphone) | faire sonner / arrêter, volume, durée, choix de la sortie audio |
 
 Telegram : `/menu` (boutons), `/bots`, `/doctolib`, `/ajouter <lien>`, `/pause 2`, `/reprendre 2`, `/supprimer 2`, `/verifier`,
-`/favoris`, `/commandes`, `/annuler <n°>`, `/reserver <id>`, `/horaires 6h-22h`, `/auto`, `/interval 30`, `/log`, `/ok`, `/reboot`, `/coins`, `/coins run`.
+`/favoris`, `/commandes`, `/annuler <n°>`, `/reserver <id>`, `/horaires 6h-22h`, `/auto`, `/interval 30`, `/log`, `/ok`, `/reboot`, `/coins`, `/coins run`, `/airpods`, `/sonner`, `/silence`.
 Seul ton chat est écouté. Si un bot ne répond plus pendant 6 min, Telegram te prévient.
 
 ## Brancher TGTG et AliExpress coins sur le serveur
@@ -27,6 +28,15 @@ apprendre le vrai prix de vente et le délai de revente. Aucune alerte tant qu'u
 21 jours de suivi (réglable). Alerte = coût réel (prix + 0,70 € + 5 % + port) contre médiane des ventes, avec boutons
 « Ouvrir », « Acheté », « Faux positif » (2 faux positifs sur un produit = produit ignoré). Telegram : `/produits`, `/suivre lego 42083`,
 `/estimer naruto tome 12`, `/pepites`, `/watch zelda switch haute`. Proxy facultatif : `"vinted": {"proxy": "http://..."}` dans `hub.json`.
+
+**AirPods** (`airpods_hub.py`, sur le PC Windows) : fait sonner les AirPods Pro 2 perdus avec un bip répétitif.
+- *Connectés au téléphone* : ouvre la page **AirPods** du hub sur le téléphone > « Sonner ici » (le navigateur joue le bip, aucun agent).
+- *Connectés au PC* : « Faire sonner (PC) » sur le site, ou `/sonner` · `/silence` · `/airpods` sur Telegram, depuis n'importe où.
+- Installation sur le PC : PowerShell, puis la ligne `irm ... install-airpods.ps1 | iex` de `INFOS.txt` (ou celle affichée sur la page
+  AirPods, en mettant la clé de l'agent). Installe Python si besoin, numpy + sounddevice dans un venv, démarrage avec Windows (sans fenêtre).
+  Dossier : `%LOCALAPPDATA%\bot-hub-airpods` (journal `airpods.log`). Relancer la ligne = mise à jour.
+- Ce n'est pas le « Localiser » d'Apple : les AirPods doivent être hors du boîtier et connectés à l'appareil qui sonne ; le haut-parleur
+  du boîtier n'est pas pilotable. Arrêt automatique (3 min par défaut). Pas d'alerte « ne répond plus » quand le PC est éteint.
 
 **Ajouter un bot** (ex. MédinLyon) : ajoute un bloc dans `~/bot-hub/scripts.json` (`id`, `name`, `cwd`, `run`, `log`, `metrics`) puis
 `sudo systemctl restart hub-scripts`. Un script Python quelconque devient une page web + des commandes Telegram.
@@ -134,7 +144,7 @@ Pour espacer davantage les passages (30 min en moyenne), mets `INTERVAL_MIN = "3
 ## Développement
 
 ```bash
-npm test                                   # 96 tests (Worker, hub, agents Python, installeur serveur)
+npm test                                   # tests Worker, hub, agents Python (dont AirPods), installeurs (Worker, hub, agents Python, installeur serveur)
 npm run dev                                # mettre les secrets dans .dev.vars (ignoré par git)
 WORKER_URL=... INGEST_KEY=... PROXY_URL=... FORCE=1 python collector/collector.py
 ```

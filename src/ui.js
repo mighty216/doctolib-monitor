@@ -22,6 +22,7 @@ export async function buildNav(env, overview = null) {
     { href: '/', label: 'Accueil' },
     { href: '/doctolib', label: 'Doctolib', status: o.doctolib.status },
     ...o.bots.map((b) => ({ href: b.href, label: b.name, status: b.status })),
+    ...(o.bots.some((b) => b.id === 'airpods') ? [] : [{ href: '/bot/airpods', label: 'AirPods' }]),
     { href: '/journal', label: 'Journal' },
   ];
 }
@@ -126,6 +127,38 @@ function botTable(b, t, actions) {
   })}`;
 }
 
+// ---------------------------------------------------------------- AirPods : sonnerie jouée par le navigateur
+// Pour des AirPods connectés au téléphone (ou au PC) qui ouvre la page : le son part vers la sortie Bluetooth active.
+// Le script est hors de <main> (remplacé à chaque rafraîchissement) : il garde l'état et remet le bouton à jour.
+const LOCAL_RING_HTML = `<section><h3>📱 Sonner sur cet appareil</h3><div class="card">
+<p style="margin:0 0 10px">AirPods connectés à <b>ce téléphone</b> (ou à l'appareil qui affiche cette page) : le bip part directement d'ici,
+sans agent. Monte le volume média, puis approche-toi du son. Arrêt automatique après 3 min.</p>
+<div class="actions"><button type="button" data-local-ring>🔊 Sonner ici</button></div></div></section>`;
+
+const LOCAL_RING_JS = `(function(){
+  var P=[[0.42,880],[0.12,0],[0.42,1175],[0.65,0]],C=1.61,MAX=180,ctx=null,out=null,next=0,end=0,timer=null,lock=null;
+  function cycle(t){P.forEach(function(p){if(p[1]){var o=ctx.createOscillator(),g=ctx.createGain();o.frequency.value=p[1];
+    g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(0.8,t+0.01);g.gain.setValueAtTime(0.8,t+p[0]-0.01);g.gain.linearRampToValueAtTime(0,t+p[0]);
+    o.connect(g);g.connect(out);o.start(t);o.stop(t+p[0]);}t+=p[0];});}
+  function fill(){if(ctx.currentTime>=end){stop();return;}while(next<Math.min(end,ctx.currentTime+30)){cycle(next);next+=C;}}
+  function on(){return !!timer}
+  function sync(){document.querySelectorAll("[data-origin]").forEach(function(x){x.textContent=location.origin});document.querySelectorAll("[data-local-ring]").forEach(function(b){b.textContent=on()?"⏹ Arrêter ici":"🔊 Sonner ici";b.classList.toggle("danger",on());});}
+  function start(){ctx=ctx||new(window.AudioContext||window.webkitAudioContext)();ctx.resume();out=ctx.createGain();out.connect(ctx.destination);
+    next=ctx.currentTime+0.05;end=next+MAX;fill();timer=setInterval(fill,1000);
+    try{navigator.wakeLock&&navigator.wakeLock.request("screen").then(function(l){lock=l}).catch(function(){})}catch(e){}sync();}
+  function stop(){clearInterval(timer);timer=null;if(out){out.disconnect();out=null;}try{lock&&lock.release()}catch(e){}lock=null;sync();}
+  document.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest("[data-local-ring]");if(!b)return;on()?stop():start();});
+  new MutationObserver(sync).observe(document.querySelector("main"),{childList:true});sync();
+})();`;
+
+function airpodsInstallHtml() {
+  return `<section><h3>💻 Brancher le PC Windows</h3><div class="card">
+<p style="margin:0 0 8px">Pour faire sonner les AirPods via le PC depuis n'importe où (web ou Telegram <code>/sonner</code>) : sur le PC où ils sont associés,
+ouvre <b>PowerShell</b> et colle cette ligne, avec la clé de l'agent (celle de la ligne <code>curl</code> dans <code>INFOS.txt</code>) :</p>
+<pre class="log" style="white-space:pre-wrap;word-break:break-all">irm -Headers @{Authorization="Bearer CLE_AGENT"} <span data-origin>https://TON-HUB</span>/agent/install-airpods.ps1 | iex</pre>
+<p class="muted" style="margin:8px 0 0">Installe Python si besoin, l'agent en arrière-plan et son démarrage avec Windows. Relançable pour mettre à jour.</p></div></section>`;
+}
+
 export async function renderBot(env, nav, bot, flash) {
   const now = nowSec();
   const online = !!isOnline(env, bot, now);
@@ -148,17 +181,22 @@ ${online ? '' : '<p class="muted">Le bot est hors ligne : les commandes lui sero
     return [timeTag(c.created_at), `<b>${esc(c.cmd)}</b> ${esc(fmtArgs(c.args))}${c.source === 'telegram' ? ' <span class="chip">Telegram</span>' : ''}`,
       `<span class="chip ${cls}">${esc(lbl)}</span>`, `<span class="res">${esc(c.result || '')}</span>`];
   });
+  const isAirpods = bot.id === 'airpods';
+  const offlineTxt = bot.placeholder ? 'Agent PC pas encore installé' : 'Hors ligne';
+  const offlineHint = isAirpods ? ' · PC éteint ou agent arrêté : « Sonner sur cet appareil » marche quand même' : " · le serveur est peut-être éteint ou l'agent arrêté";
   const body = `${flashHtml(flash)}
 <div class="hero"><div><h1>${esc(bot.name)}</h1><div class="sub">
-<span class="global ${status === 'idle' ? '' : esc(status)}">${esc(online ? (st?.summary || 'En attente du premier rapport') : 'Hors ligne')}</span>
-<span class="muted">Dernier signe de l'agent : ${timeTag(bot.lastSeen)}${online ? '' : " · le serveur est peut-être éteint ou l'agent arrêté"}</span></div></div></div>
+<span class="global ${status === 'idle' ? '' : esc(status)}">${esc(online ? (st?.summary || 'En attente du premier rapport') : offlineTxt)}</span>
+<span class="muted">Dernier signe de l'agent : ${timeTag(bot.lastSeen)}${online ? '' : offlineHint}</span></div></div></div>
 ${metricsHtml(st?.metrics)}
+${isAirpods ? `<div class="grid2">${LOCAL_RING_HTML}${bot.placeholder || !online ? airpodsInstallHtml() : ''}</div>` : ''}
 ${actionsBlock || settingsBlock ? `<div class="grid2">${actionsBlock}${settingsBlock}</div>` : ''}
 ${tables}
 ${cmds.length ? `<h3>Dernières commandes</h3>${tableHtml(['Quand', 'Commande', 'État', 'Résultat'], cmdRows, { cellClass: ['nw'] })}` : ''}
 ${st?.log?.length ? `<details class="fold" id="fold-log" open><summary><h3>Journal du bot</h3></summary><pre class="log">${esc(st.log.join('\n'))}</pre></details>` : ''}
 ${events.length ? `<details class="fold" id="fold-ev"><summary><h3>Évènements (${events.length})</h3></summary>${tableHtml(['Quand', 'Évènement'], eventRows(events, false), { rowClass: (i) => `lv-${events[i].level}`, cellClass: ['nw'] })}</details>` : ''}`;
-  return shell({ title: bot.name, nav, active: `/bot/${bot.id}`, body, refresh: 20 });
+  const script = isAirpods ? LOCAL_RING_JS : '';
+  return shell({ title: bot.name, nav, active: `/bot/${bot.id}`, body, refresh: 20, script });
 }
 
 const DOCTOLIB_BAD = ['alert_failed', 'down', 'telegram_ko', 'collector_silent', 'dispatch_failed'];

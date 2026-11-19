@@ -10,7 +10,7 @@ import { nowSec, dayLabel, scrub } from './util.js';
 
 const ICON = { ok: '🟢', warn: '🟠', bad: '🔴', idle: '⚪' };
 const LEGACY = new Set(['favoris', 'commandes', 'annuler', 'horaires', 'auto', 'interval', 'log', 'ok', 'reboot', 'reserver']);
-const ALIAS = { coins: 'alicoins', ali: 'alicoins', aliexpress: 'alicoins', medin: 'medinlyon', medinlyon: 'medinlyon', tgtg: 'tgtg', doctolib: 'doctolib' };
+const ALIAS = { coins: 'alicoins', ali: 'alicoins', aliexpress: 'alicoins', medin: 'medinlyon', medinlyon: 'medinlyon', tgtg: 'tgtg', doctolib: 'doctolib', airpods: 'airpods', ecouteurs: 'airpods' };
 
 async function sha(text) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
@@ -140,6 +140,7 @@ Doctolib : /doctolib · /ajouter <lien> · /pause <n> · /reprendre <n> · /supp
   (ou colle simplement un lien Doctolib)
 Too Good To Go : /tgtg · /favoris · /commandes · /annuler <id> · /reserver <id> · /horaires 6h-22h · /auto [n] · /interval <secondes> · /log · /ok · /reboot
 AliExpress coins : /coins · /coins run
+AirPods : /airpods · /sonner · /silence
 Autres bots : /<nom> pour voir l'état et les actions.`;
 
 // ---------------------------------------------------------------- actions Doctolib

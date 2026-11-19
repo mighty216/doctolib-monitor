@@ -470,3 +470,50 @@ test('Telegram : un message HTML refusé est renvoyé en texte simple au lieu d\
   assert.equal(r.ok, true);
   assert.equal(calls.length, 2); assert.equal(calls[1].text, 'Panier & co coupé'); assert.equal(calls[1].parse_mode, undefined);
 });
+
+// ------------------------------------------------------------------ AirPods
+test('AirPods : page servie sans agent (sonnerie locale + ligne d\'installation PowerShell), onglet présent', async () => {
+  const cookie = await login();
+  const home = await (await req('/', { headers: { cookie } })).text();
+  assert.match(home, /href="\/bot\/airpods"/);
+  const r = await req('/bot/airpods', { headers: { cookie } });
+  assert.equal(r.status, 200);
+  const html = await r.text();
+  assert.match(html, /data-local-ring/);
+  assert.match(html, /install-airpods\.ps1/);
+  assert.match(html, /Agent PC pas encore installé/);
+  assert.match(html, /AudioContext/);
+  assert.ok(!html.includes(AGENT), 'la clé de l\'agent n\'est jamais affichée');
+  assert.equal((await req('/bot/autre', { headers: { cookie } })).status, 404);
+});
+
+test('AirPods : installeur Windows seulement avec la clé, fichiers intacts en base64', async () => {
+  assert.equal((await req('/agent/install-airpods.ps1')).status, 401);
+  const r = await agent('/agent/install-airpods.ps1');
+  assert.equal(r.status, 200);
+  const ps = await r.text();
+  assert.ok(ps.includes(`$HubKey = '${AGENT}'`));
+  assert.ok(ps.includes("$HubUrl = 'https://hub.test'"));
+  assert.ok(!ps.includes('__FILES__'));
+  assert.ok(/^[\x00-\x7f]*$/.test(ps), 'script ASCII (PowerShell 5.1)');
+  const fs = await import('node:fs');
+  for (const f of ['hub_client.py', 'airpods_hub.py']) {
+    const m = new RegExp(`'${f.replace('.', '\\.')}' = '([A-Za-z0-9+/=]+)'`).exec(ps);
+    assert.ok(m, f);
+    assert.equal(Buffer.from(m[1], 'base64').toString('utf8'), fs.readFileSync(new URL(`../agent/${f}`, import.meta.url), 'utf8'));
+  }
+});
+
+test('AirPods : /sonner sur Telegram -> commande pour l\'agent du PC ; /airpods affiche le menu', async () => {
+  await report({ bot: 'airpods', name: 'AirPods', state: {
+    status: 'ok', summary: 'prêts', offlineAlert: false,
+    actions: [{ id: 'ring', label: '🔊 Faire sonner (PC)' }], telegram: [{ cmd: 'sonner', text: 'Faire sonner' }, { cmd: 'silence', text: 'Arrêter' }],
+  } });
+  await say('/sonner');
+  assert.deepEqual(rows("SELECT cmd, source FROM commands WHERE bot = 'airpods'").map((c) => [c.cmd, c.source]), [['sonner', 'telegram']]);
+  await say('/airpods');
+  assert.ok(tg.some((c) => JSON.stringify(c.reply_markup || {}).includes('c:airpods:ring')), 'bouton « Faire sonner » dans le menu');
+  const html = await (await req('/bot/airpods', { headers: { cookie: await login() } })).text();
+  assert.match(html, /data-local-ring/);
+  assert.doesNotMatch(html, /pas encore installé/);
+});

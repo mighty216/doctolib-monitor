@@ -9,9 +9,16 @@ const FILES = ['hub_client.py', 'tgtg_hub.py', 'script_agent.py', 'medinlyon.py'
 const files = {};
 for (const f of FILES) files[f] = fs.readFileSync(path.join(root, 'agent', f), 'utf8');
 const template = fs.readFileSync(path.join(root, 'agent', 'install-agent.sh'), 'utf8');
+// Agent AirPods (PC Windows) : fichiers en base64 (aucun souci d'encodage ni d'échappement dans PowerShell)
+const WIN_FILES = ['hub_client.py', 'airpods_hub.py'];
+const winFiles = {};
+for (const f of WIN_FILES) winFiles[f] = fs.readFileSync(path.join(root, 'agent', f)).toString('base64');
+const winTemplate = fs.readFileSync(path.join(root, 'agent', 'install-airpods.ps1'), 'utf8');
 const out = `// FICHIER GÉNÉRÉ par scripts/build-agent.mjs : ne pas modifier à la main.
 export const AGENT_FILES = ${JSON.stringify(files, null, 1)};
 export const INSTALL_TEMPLATE = ${JSON.stringify(template)};
+export const WIN_FILES = ${JSON.stringify(winFiles, null, 1)};
+export const WIN_TEMPLATE = ${JSON.stringify(winTemplate)};
 `;
 const dest = path.join(root, 'src', 'agent_files.js');
 if (process.argv.includes('--check')) {

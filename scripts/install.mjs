@@ -462,6 +462,7 @@ const tgTest = await call('/test-telegram', 'POST').catch(() => null);
 if (tgTest && tgTest.status === 303) ok('Test Telegram envoyé par le site (vérifie ton téléphone)');
 
 const agentLine = `curl -fsSL -H "Authorization: Bearer ${state.agentKey}" ${baseUrl}/agent/install.sh | bash`;
+const airpodsLine = `irm -Headers @{Authorization="Bearer ${state.agentKey}"} ${baseUrl}/agent/install-airpods.ps1 | iex`;
 fs.writeFileSync(INFOS_FILE, [
   'Hub de bots',
   '',
@@ -472,6 +473,9 @@ fs.writeFileSync(INFOS_FILE, [
   '',
   'Brancher TGTG et AliExpress coins : connecte-toi en SSH à ton serveur OVH et colle cette ligne :',
   agentLine,
+  '',
+  'Brancher les AirPods (PC Windows où ils sont associés) : ouvre PowerShell et colle cette ligne :',
+  airpodsLine,
   '',
   "Les surveillances Doctolib se gèrent sur le site ou dans Telegram (/doctolib, ou colle un lien).",
   '',

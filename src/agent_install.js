@@ -1,4 +1,4 @@
-import { AGENT_FILES, INSTALL_TEMPLATE } from './agent_files.js';
+import { AGENT_FILES, INSTALL_TEMPLATE, WIN_FILES, WIN_TEMPLATE } from './agent_files.js';
 
 /** Script d'installation de l'agent, prêt à être exécuté sur le serveur (clé et adresse déjà remplies). */
 export function buildInstallScript(origin, key) {
@@ -9,4 +9,12 @@ export function buildInstallScript(origin, key) {
     return `cat > ${name} <<'__BOT_HUB_EOF__'\n${content.replace(/\n?$/, '\n')}__BOT_HUB_EOF__\nchmod 600 ${name}`;
   }).join('\n');
   return INSTALL_TEMPLATE.replace('__HUB_URL__', origin).replace('__HUB_KEY__', key).replace('__FILES__', () => files);
+}
+
+/** Installeur PowerShell de l'agent AirPods (PC Windows) : irm -Headers @{Authorization="Bearer CLE"} URL/agent/install-airpods.ps1 | iex */
+export function buildWindowsInstall(origin, key) {
+  if (!/^https:\/\/[\w.-]+(:\d+)?$/.test(origin) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(origin)) throw new Error('origine invalide');
+  if (!/^[\w.-]{16,128}$/.test(key)) throw new Error('clé invalide');
+  const files = Object.entries(WIN_FILES).map(([name, b64]) => `  '${name}' = '${b64}'`).join('\n');
+  return WIN_TEMPLATE.replace('__HUB_URL__', origin).replace('__HUB_KEY__', key).replace('__FILES__', () => files);
 }

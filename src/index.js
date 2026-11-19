@@ -10,7 +10,7 @@ import { agentPoll, agentReport, agentWatchdog, getBot, getCommand, queueCommand
 import { doctolibView, hubOverview, isDirect } from './overview.js';
 import { handleTelegramUpdate, setupWebhook, ensureWebhook, webhookPathSecret, webhookHeaderSecret } from './tgbot.js';
 import { buildNav, renderHome, renderBot, renderJournal } from './ui.js';
-import { buildInstallScript } from './agent_install.js';
+import { buildInstallScript, buildWindowsInstall } from './agent_install.js';
 
 const SEC_HEADERS = {
   'cache-control': 'no-store',
@@ -174,6 +174,10 @@ async function handle(request, env, ctx) {
     if (agentAuth(request, env) !== 'ok') return new Response('non autorisé\n', { status: 401 });
     return new Response(buildInstallScript(url.origin, String(env.AGENT_KEY)), { headers: { 'content-type': 'text/x-shellscript; charset=utf-8' } });
   }
+  if (url.pathname === '/agent/install-airpods.ps1' && request.method === 'GET') { // agent AirPods sur le PC Windows
+    if (agentAuth(request, env) !== 'ok') return new Response('non autorisé\n', { status: 401 });
+    return new Response(buildWindowsInstall(url.origin, String(env.AGENT_KEY)), { headers: { 'content-type': 'text/plain; charset=utf-8' } });
+  }
   const auth = await authState(request, env, url);
   if (auth === 'nokey') {
     return renderMessage('Non configuré', 'Définis le secret DASHBOARD_KEY (12 caractères minimum) : wrangler secret put DASHBOARD_KEY', 503);
@@ -218,6 +222,8 @@ async function handle(request, env, ctx) {
     if (P.startsWith('/bot/')) {
       const bot = await getBot(env, decodeURIComponent(P.slice(5)));
       const nav = await buildNav(env);
+      // AirPods : la page sert aussi sans agent (bouton « Sonner sur cet appareil » + installation du PC)
+      if (!bot && P === '/bot/airpods') return html(await renderBot(env, nav, { id: 'airpods', name: 'AirPods', kind: 'agent', lastSeen: 0, stateTs: 0, state: null, placeholder: true }, flash));
       if (!bot) return renderMessage('Bot introuvable', "Cet agent ne s'est encore jamais connecté.", 404);
       return html(await renderBot(env, nav, bot, flash));
     }
