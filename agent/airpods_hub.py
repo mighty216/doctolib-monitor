@@ -29,10 +29,11 @@ if np is None:
 BOT_ID = "airpods"
 SETTINGS_FILE = os.path.join(HERE, "airpods.json")
 LOG_FILE = os.path.join(HERE, "airpods.log")
-DEFAULTS = {"volume": 60, "duree": 180, "sortie": ""}
+DEFAULTS = {"volume": 100, "duree": 180, "sortie": ""}
 STATE_EVERY = 20
-# Motif bip-bip : (durée s, fréquence Hz) ; 0 = silence
-PATTERN = ((0.42, 880), (0.12, 0), (0.42, 1175), (0.65, 0))
+# Motif bip-bip-bip : (durée s, fréquence Hz) ; 0 = silence. 2,7-3,2 kHz : zone où l'oreille est la plus sensible
+PATTERN = ((0.3, 2700), (0.07, 0), (0.3, 3200), (0.07, 0), (0.3, 2700), (0.6, 0))
+DRIVE = 4.0  # sinus saturé -> presque carré : bien plus fort à crête égale, sans clipper
 # Profil Bluetooth « mains libres » (mono 16 kHz) à éviter quand le profil stéréo existe
 HANDSFREE = ("hands-free", "handsfree", "mains libres", "mains-libres", "ag audio", "headset")
 HOSTAPI_PREF = ("Windows WASAPI", "Windows DirectSound", "MME")
@@ -81,7 +82,8 @@ def build_cycle(samplerate, channels, volume):
         fade = min(n // 2, int(samplerate * 0.01))  # anti-clic
         env[:fade] = np.linspace(0, 1, fade)
         env[-fade:] = np.linspace(1, 0, fade)
-        parts.append((volume * env * np.sin(2 * np.pi * freq * t)).astype(np.float32))
+        wave = np.tanh(DRIVE * np.sin(2 * np.pi * freq * t)) / np.tanh(DRIVE)
+        parts.append((volume * env * wave).astype(np.float32))
     mono = np.concatenate(parts)
     return np.repeat(mono[:, None], channels, axis=1)
 

@@ -75,6 +75,15 @@ class AirpodsTest(unittest.TestCase):
         self.assertEqual(airpods_hub.Bot(FakeHub(), snd=fake_sd(DEVS)).settings["volume"], 100)
 
     @unittest.skipUnless(HAS_NP, "numpy absent")
+    def test_bip_fort_sans_saturer(self):
+        import numpy as np
+        c = airpods_hub.build_cycle(48000, 2, 1.0)
+        self.assertLessEqual(float(np.abs(c).max()), 1.0)
+        bips = c[c != 0]
+        self.assertGreater(float(np.sqrt((bips ** 2).mean())), 0.85, "plus fort qu'un sinus (0,71)")
+        self.assertEqual(airpods_hub.DEFAULTS["volume"], 100)
+
+    @unittest.skipUnless(HAS_NP, "numpy absent")
     def test_sonner_puis_arreter(self):
         sd = fake_sd(DEVS)
         bot = airpods_hub.Bot(FakeHub(), snd=sd)

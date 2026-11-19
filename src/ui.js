@@ -132,13 +132,14 @@ function botTable(b, t, actions) {
 // Le script est hors de <main> (remplacé à chaque rafraîchissement) : il garde l'état et remet le bouton à jour.
 const LOCAL_RING_HTML = `<section><h3>📱 Sonner sur cet appareil</h3><div class="card">
 <p style="margin:0 0 10px">AirPods connectés à <b>ce téléphone</b> (ou à l'appareil qui affiche cette page) : le bip part directement d'ici,
-sans agent. Monte le volume média, puis approche-toi du son. Arrêt automatique après 3 min.</p>
+sans agent. Monte le volume média à fond, puis approche-toi du son. Arrêt automatique après 3 min.
+<br><span class="muted">⚠️ Son très fort : ne porte pas les AirPods pendant la sonnerie.</span></p>
 <div class="actions"><button type="button" data-local-ring>🔊 Sonner ici</button></div></div></section>`;
 
 const LOCAL_RING_JS = `(function(){
-  var P=[[0.42,880],[0.12,0],[0.42,1175],[0.65,0]],C=1.61,MAX=180,ctx=null,out=null,next=0,end=0,timer=null,lock=null;
-  function cycle(t){P.forEach(function(p){if(p[1]){var o=ctx.createOscillator(),g=ctx.createGain();o.frequency.value=p[1];
-    g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(0.8,t+0.01);g.gain.setValueAtTime(0.8,t+p[0]-0.01);g.gain.linearRampToValueAtTime(0,t+p[0]);
+  var P=[[0.3,2700],[0.07,0],[0.3,3200],[0.07,0],[0.3,2700],[0.6,0]],C=1.64,MAX=180,ctx=null,out=null,next=0,end=0,timer=null,lock=null;
+  function cycle(t){P.forEach(function(p){if(p[1]){var o=ctx.createOscillator(),g=ctx.createGain();o.type="square";o.frequency.value=p[1];
+    g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(0.9,t+0.01);g.gain.setValueAtTime(0.9,t+p[0]-0.01);g.gain.linearRampToValueAtTime(0,t+p[0]);
     o.connect(g);g.connect(out);o.start(t);o.stop(t+p[0]);}t+=p[0];});}
   function fill(){if(ctx.currentTime>=end){stop();return;}while(next<Math.min(end,ctx.currentTime+30)){cycle(next);next+=C;}}
   function on(){return !!timer}
